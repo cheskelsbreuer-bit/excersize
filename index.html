@@ -401,18 +401,15 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   </div>
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <span id="save-status" style="font-size:0.75rem;color:#888;background:rgba(255,255,255,0.1);padding:4px 10px;border-radius:12px">💾 Auto-saved</span>
-    <button id="save-file-btn" class="btn btn-sm" onclick="exportBackup()" style="background:#27ae60;color:#fff;font-weight:700" title="Download a backup file of all your data (recommended daily)">💾 Save to File</button>
-    <button class="btn btn-sm" onclick="importBackup()" style="background:rgba(255,255,255,0.15);color:#fff" title="Load data from a previously saved file">📤 Load File</button>
-    <button class="btn btn-sm" onclick="openThemePicker()" style="background:rgba(255,255,255,0.15);color:#fff" title="Change theme">🎨 Theme</button>
     <div style="position:relative" id="menu-wrap">
       <button class="btn btn-gray btn-sm" onclick="toggleMenu()" style="background:rgba(255,255,255,0.15);color:#fff">⚙ Menu ▾</button>
       <div id="gear-menu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.2);min-width:220px;z-index:50;overflow:hidden">
-        <button class="menu-item" onclick="exportBackup();toggleMenu()">📥 Download Backup</button>
-        <button class="menu-item" onclick="importBackup();toggleMenu()">📤 Restore from Backup</button>
+        <button id="save-file-btn" class="menu-item" onclick="exportBackup();toggleMenu()">💾 Save to File (Backup)</button>
+        <button class="menu-item" onclick="importBackup();toggleMenu()">📤 Load File (Restore)</button>
         <button class="menu-item" onclick="exportCSV();toggleMenu()">📊 Export Members CSV</button>
-        <button class="menu-item" onclick="openCustomFieldsManager();toggleMenu()">🏷 Manage Custom Fields</button>
-        <button class="menu-item" onclick="openThemePicker();toggleMenu()">🎨 Theme…</button>
         <button class="menu-item" onclick="window.print();toggleMenu()">🖨 Print This Page</button>
+        <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
+        <button class="menu-item" onclick="showTab('settings');toggleMenu()">⚙ Open Settings</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
       </div>
@@ -440,6 +437,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   <button data-tab="paused" class="corner-btn">⏸ Paused</button>
   <button data-tab="archived" class="corner-btn">🗃 Former</button>
   <button data-tab="lookup" class="corner-btn">🔍 Lookup</button>
+  <button data-tab="settings" class="corner-btn edit-only">⚙ Settings</button>
 </nav>
 
 <!-- DASHBOARD -->
@@ -589,6 +587,12 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
     <input id="lq" placeholder="Type member name…" style="max-width:340px">
   </div>
   <div id="l-result"></div>
+</div>
+
+<!-- SETTINGS (v19) -->
+<div id="tab-settings" class="tab">
+  <div class="notice">⚙ Configure your app. Most changes save instantly.</div>
+  <div id="settings-content"></div>
 </div>
 
 
@@ -1279,7 +1283,7 @@ function memberOpts(preset) {
 }
 
 // Build a multi-group checkbox picker. `preset` is the current group string (e.g. "Sunday, Monday")
-const ALL_GROUPS = ['Sunday', 'Monday', 'Wednesday', 'Thursday'];
+let ALL_GROUPS = ['Sunday', 'Monday', 'Wednesday', 'Thursday']; // v19: now editable via Settings; rebuilt from DB.groups
 function groupPickerHTML(id, preset) {
   const checked = (preset || '').toLowerCase().split(',').map(s => s.trim());
   return '<div class="gpicker" id="' + id + '">' +
@@ -1314,6 +1318,7 @@ function showTab(id) {
   if (id === 'payments') renderPayments();
   if (id === 'notes') renderNotes();
   if (id === 'log') renderActivityLog();
+  if (id === 'settings') renderSettings();
 }
 document.querySelectorAll('#mainnav button').forEach(btn => {
   btn.addEventListener('click', function() { showTab(this.getAttribute('data-tab')); });
@@ -1357,7 +1362,10 @@ function initDashboard() {
           '<td>' + m.group + '</td>' +
           '<td>' + balHTML(m.balance) + '</td>' +
           '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(0) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
-          '<td>' + (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>') + '</td>' +
+          '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
+            (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>') +
+            (m.phone ? '<button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')" title="Send reminder SMS">📱</button>' : '') +
+          '</td>' +
           '</tr>';
       }).join('')
     : '<tr><td colspan="5" class="empty">Nobody owes 🎉</td></tr>';
@@ -1709,7 +1717,7 @@ function openChargeGroup(gName) {
     '<p style="color:#555;font-size:0.88rem;margin-bottom:14px">This will add a class charge to every active member. Members who owed money will owe more. Members with credit will have their credit reduced.</p>' +
     '<div class="fgrid">' +
       '<div class="fg"><label>Class Date *</label><input id="chg-date" type="date" value="' + today + '"></div>' +
-      '<div class="fg"><label>Amount Per Person ($)</label><input id="chg-amount" type="number" value="15" oninput="updateChargePreview()"></div>' +
+      '<div class="fg"><label>Amount Per Person ($)</label><input id="chg-amount" type="number" value="' + _defaultPerClass() + '" oninput="updateChargePreview()"></div>' +
     '</div>' +
     '<div style="margin-top:16px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
@@ -1948,7 +1956,7 @@ function saveEditMember(idx) {
   m.phone = document.getElementById('ef-phone').value.trim();
   m.group = readGroupPicker('ef-group-picker');
   // BUG FIX v13: Allow $0 (free members). Use isNaN check, not || which treats 0 as falsy.
-  { const _apc = parseFloat(document.getElementById('ef-apc').value); m.amountPerClass = isNaN(_apc) ? 15 : _apc; }
+  { const _apc = parseFloat(document.getElementById('ef-apc').value); m.amountPerClass = isNaN(_apc) ? _defaultPerClass() : _apc; }
   m.startDate = fromISODate(document.getElementById('ef-start').value);
   m.endDate = fromISODate(document.getElementById('ef-end').value);
   m.birthday = fromISODate(document.getElementById('ef-bday').value);
@@ -1995,7 +2003,7 @@ function openAddMember() {
     '<div class="fg"><label>Name *</label><input id="ef-name" placeholder="Full name"></div>' +
     '<div class="fg"><label>Phone</label><input id="ef-phone"></div>' +
     '<div class="fg" style="grid-column:1/-1"><label>Group(s) * — select one or more</label>' + groupPickerHTML('ef-group-picker', '') + '</div>' +
-    '<div class="fg"><label>Per Class ($)</label><input id="ef-apc" type="number" min="0" step="0.01" value="15"></div>' +
+    '<div class="fg"><label>Per Class ($)</label><input id="ef-apc" type="number" min="0" step="0.01" value="' + _defaultPerClass() + '"></div>' +
     '<div class="fg"><label>🎂 Birthday <span class="hint">(optional)</span></label><input id="ef-bday" type="date"></div>' +
     '<div class="fg"><label>Start Date</label><input id="ef-start" type="date"></div>' +
     '<div class="fg"><label>End Date <span class="hint">(blank = active)</span></label><input id="ef-end" type="date"></div>' +
@@ -2014,7 +2022,7 @@ function addNewMember() {
     name: name,
     phone: document.getElementById('ef-phone').value.trim(),
     group: readGroupPicker('ef-group-picker'),
-    amountPerClass: (function(){ const _v = parseFloat(document.getElementById('ef-apc').value); return isNaN(_v) ? 15 : _v; })(),
+    amountPerClass: (function(){ const _v = parseFloat(document.getElementById('ef-apc').value); return isNaN(_v) ? _defaultPerClass() : _v; })(),
     startDate: fromISODate(document.getElementById('ef-start').value),
     endDate: end,
     birthday: fromISODate(document.getElementById('ef-bday').value),
@@ -2582,8 +2590,9 @@ function ensureNotes() {
   _autoCategorize();
 }
 
-const CATEGORIES = ['Aerobics', 'Ball', 'Aqua', 'Weights'];
-const CAT_ICONS = { 'Aerobics': '🏃', 'Ball': '⚽', 'Aqua': '🏊', 'Weights': '🏋️', 'Other': '📝' };
+// v19: now editable via Settings; rebuilt from DB.categories
+let CATEGORIES = ['Aerobics', 'Ball', 'Aqua', 'Weights'];
+let CAT_ICONS = { 'Aerobics': '🏃', 'Ball': '⚽', 'Aqua': '🏊', 'Weights': '🏋️', 'Other': '📝', 'Uncategorized': '📝' };
 
 function _guessCategory(combo) {
   const text = (combo.title + ' ' + combo.sections.map(s => s.title).join(' ')).toLowerCase();
@@ -4133,6 +4142,343 @@ function _cancelPreview() {
   document.getElementById('paste-area').value = '';
 }
 
+/* ============ v19: SETTINGS — schema, sync, render ============ */
+
+const _DEFAULT_CAT_ICONS = { 'Aerobics': '🏃', 'Ball': '⚽', 'Aqua': '🏊', 'Weights': '🏋️', 'Other': '📝', 'Uncategorized': '📂' };
+
+function _ensureSettingsSchema() {
+  if (!DB.settings || typeof DB.settings !== 'object') DB.settings = {};
+  if (typeof DB.settings.defaultPerClass !== 'number' || isNaN(DB.settings.defaultPerClass)) DB.settings.defaultPerClass = 15;
+  if (!Array.isArray(DB.categories) || !DB.categories.length) {
+    DB.categories = ['Aerobics', 'Ball', 'Aqua', 'Weights'].map(n => ({ name: n, icon: _DEFAULT_CAT_ICONS[n] || '📝' }));
+  }
+  if (!Array.isArray(DB.groups) || !DB.groups.length) {
+    DB.groups = ['Sunday', 'Monday', 'Wednesday', 'Thursday'].map(n => ({ name: n }));
+  }
+  _syncDerivedLists();
+}
+function _syncDerivedLists() {
+  if (Array.isArray(DB.categories)) {
+    CATEGORIES = DB.categories.map(c => c.name);
+    CAT_ICONS = {};
+    DB.categories.forEach(c => { CAT_ICONS[c.name] = c.icon || '📝'; });
+    if (!CAT_ICONS['Uncategorized']) CAT_ICONS['Uncategorized'] = '📂';
+    if (!CAT_ICONS['Other']) CAT_ICONS['Other'] = '📝';
+  }
+  if (Array.isArray(DB.groups)) {
+    ALL_GROUPS = DB.groups.map(g => g.name);
+  }
+}
+function _defaultPerClass() {
+  return (DB.settings && typeof DB.settings.defaultPerClass === 'number') ? DB.settings.defaultPerClass : 15;
+}
+
+function _escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+function renderSettings() {
+  _ensureSettingsSchema();
+  _ensureCF();
+  _ensureTheme();
+  const t = DB.settings.theme || { mode: 'light', custom: {} };
+  const c = t.custom || {};
+
+  // ---------- Defaults section ----------
+  const defaultsHTML = '' +
+    '<div class="shead">💰 Defaults for new members</div>' +
+    '<div class="fgrid" style="margin-bottom:14px">' +
+      '<div class="fg"><label>Default per-class amount ($)</label>' +
+        '<input id="set-default-pc" type="number" min="0" step="0.01" value="' + _defaultPerClass() + '" onchange="setDefaultPerClass(this.value)">' +
+        '<div class="hint">New members start with this. You can still change it per member.</div>' +
+      '</div>' +
+    '</div>';
+
+  // ---------- Feature toggles section ----------
+  const ft = DB.settings.features || {};
+  const togRow = (key, label, desc, on) =>
+    '<div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid #eef">' +
+      '<label class="toggle" style="position:relative;display:inline-block;width:46px;height:24px;flex-shrink:0">' +
+        '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="setFeatureToggle(\'' + key + '\', this.checked)" style="opacity:0;width:0;height:0;position:absolute">' +
+        '<span style="position:absolute;inset:0;background:' + (on ? '#27ae60' : '#ccc') + ';border-radius:24px;transition:0.25s"></span>' +
+        '<span style="position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:18px;height:18px;background:#fff;border-radius:50%;transition:0.25s"></span>' +
+      '</label>' +
+      '<div style="flex:1"><div style="font-weight:700">' + label + '</div><div style="font-size:0.78rem;color:#777">' + desc + '</div></div>' +
+    '</div>';
+  const featuresHTML = '' +
+    '<div class="shead">✨ Optional features</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Turn extras on or off. Leave them off if you don\'t need them — keeps the app simpler.</p>' +
+    togRow('attendance', '📅 Class attendance tracking', 'Mark who showed up to each class. When OFF, you charge everyone like today. (Coming soon — toggle saved.)', !!ft.attendance) +
+    togRow('memberPortal', '👤 Member self-service portal', 'Let members log in to see their own balance and pay online. (Requires backend — toggle saved for future setup.)', !!ft.memberPortal);
+
+  // ---------- Groups section ----------
+  let groupsRows = DB.groups.map((g, i) =>
+    '<div class="cf-mgr-row">' +
+      '<input type="text" value="' + _escAttr(g.name) + '" data-old="' + _escAttr(g.name) + '" onchange="renameGroup(' + i + ', this.value, this.getAttribute(\'data-old\'))">' +
+      '<button class="btn btn-gray btn-sm" onclick="moveGroup(' + i + ',-1)" title="Move up" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="moveGroup(' + i + ',1)" title="Move down" ' + (i === DB.groups.length - 1 ? 'disabled' : '') + '>↓</button>' +
+      '<button class="btn btn-red btn-sm" onclick="deleteGroup(' + i + ')" title="Delete">✕</button>' +
+    '</div>'
+  ).join('');
+  if (!DB.groups.length) groupsRows = '<div class="cf-empty-hint">No groups yet. Add one below ↓</div>';
+  const groupsHTML = '' +
+    '<div class="shead">🗂 Day-of-week groups</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Edit, reorder, or add the groups members can join. Renaming updates all members and payments.</p>' +
+    '<div>' + groupsRows + '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+      '<input id="set-new-group" type="text" placeholder="New group (e.g. Friday)" style="flex:1;min-width:160px;padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:0.88rem">' +
+      '<button class="btn btn-green btn-sm" onclick="addGroup()">+ Add Group</button>' +
+    '</div>';
+
+  // ---------- Categories section ----------
+  let catsRows = DB.categories.map((cat, i) =>
+    '<div class="cf-mgr-row">' +
+      '<input type="text" value="' + _escAttr(cat.icon) + '" maxlength="3" style="flex:0 0 60px;text-align:center;font-size:1.1rem" onchange="renameCategoryIcon(' + i + ', this.value)">' +
+      '<input type="text" value="' + _escAttr(cat.name) + '" data-old="' + _escAttr(cat.name) + '" onchange="renameCategory(' + i + ', this.value, this.getAttribute(\'data-old\'))">' +
+      '<button class="btn btn-gray btn-sm" onclick="moveCategory(' + i + ',-1)" title="Move up" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="moveCategory(' + i + ',1)" title="Move down" ' + (i === DB.categories.length - 1 ? 'disabled' : '') + '>↓</button>' +
+      '<button class="btn btn-red btn-sm" onclick="deleteCategory(' + i + ')" title="Delete">✕</button>' +
+    '</div>'
+  ).join('');
+  if (!DB.categories.length) catsRows = '<div class="cf-empty-hint">No categories yet. Add one below ↓</div>';
+  const catsHTML = '' +
+    '<div class="shead">🏷 Notes categories</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Customize the tabs in your Notes section. Deleting a category moves its combos to "Uncategorized".</p>' +
+    '<div>' + catsRows + '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+      '<input id="set-new-cat-icon" type="text" placeholder="🏷" maxlength="3" value="📝" style="flex:0 0 60px;text-align:center;font-size:1.1rem;padding:7px 9px;border:1px solid #ccc;border-radius:6px">' +
+      '<input id="set-new-cat-name" type="text" placeholder="New category (e.g. Stretching)" style="flex:1;min-width:160px;padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:0.88rem">' +
+      '<button class="btn btn-green btn-sm" onclick="addCategory()">+ Add Category</button>' +
+    '</div>';
+
+  // ---------- Custom fields section ----------
+  let cfRows = DB.customFields.map((f, i) =>
+    '<div class="cf-mgr-row">' +
+      '<input type="text" value="' + _escAttr(f.label) + '" onchange="renameCustomField(' + i + ', this.value)">' +
+      '<select onchange="changeCustomFieldType(' + i + ', this.value)">' +
+        '<option value="text"' + (f.type === 'text' ? ' selected' : '') + '>Text</option>' +
+        '<option value="textarea"' + (f.type === 'textarea' ? ' selected' : '') + '>Long text</option>' +
+        '<option value="number"' + (f.type === 'number' ? ' selected' : '') + '>Number</option>' +
+        '<option value="date"' + (f.type === 'date' ? ' selected' : '') + '>Date</option>' +
+      '</select>' +
+      '<button class="btn btn-gray btn-sm" onclick="moveCustomField(' + i + ',-1)" title="Move up" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="moveCustomField(' + i + ',1)" title="Move down" ' + (i === DB.customFields.length - 1 ? 'disabled' : '') + '>↓</button>' +
+      '<button class="btn btn-red btn-sm" onclick="deleteCustomField(' + i + ')" title="Delete">✕</button>' +
+    '</div>'
+  ).join('');
+  if (!DB.customFields.length) cfRows = '<div class="cf-empty-hint">No custom fields yet. Add one below ↓</div>';
+  const cfHTML = '' +
+    '<div class="shead">📋 Custom member fields</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Fields you add here appear on every member. Examples: Address, Notes, Emergency Contact, Locker #.</p>' +
+    '<div>' + cfRows + '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+      '<input id="cf-new-label" type="text" placeholder="New field label" style="flex:1;min-width:160px;padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:0.88rem">' +
+      '<select id="cf-new-type" style="padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:0.85rem">' +
+        '<option value="text">Text</option>' +
+        '<option value="textarea">Long text</option>' +
+        '<option value="number">Number</option>' +
+        '<option value="date">Date</option>' +
+      '</select>' +
+      '<button class="btn btn-green btn-sm" onclick="addCustomField();renderSettings()">+ Add Field</button>' +
+    '</div>';
+
+  // ---------- Theme section ----------
+  const themeOpt = (mode, label, hint, swatch) =>
+    '<div class="theme-opt' + (t.mode === mode ? ' active' : '') + '" onclick="setTheme(\'' + mode + '\');renderSettings()">' +
+      '<div class="sw" style="background:' + swatch + '"></div>' +
+      '<div><div style="font-weight:700">' + label + '</div><div style="font-size:0.78rem;color:#777">' + hint + '</div></div>' +
+    '</div>';
+  const themeHTML = '' +
+    '<div class="shead">🎨 Theme</div>' +
+    themeOpt('light', 'Light', 'Default bright theme', 'linear-gradient(135deg,#f0f4f8,#2d6a9f)') +
+    themeOpt('dark', 'Dark', 'Easier on the eyes at night', 'linear-gradient(135deg,#1a1a1a,#444)') +
+    themeOpt('custom', 'Custom', 'Pick your own colors below', 'linear-gradient(135deg,' + (c.bg || '#f0f4f8') + ',' + (c.accent || '#2d6a9f') + ')') +
+    '<div style="margin-top:10px">' +
+      '<div class="theme-color-row"><label>Background</label><input type="color" value="' + (c.bg || '#f0f4f8') + '" oninput="setThemeCustom(\'bg\', this.value)"><div style="font-size:0.75rem;color:#888">' + (c.bg || '#f0f4f8') + '</div></div>' +
+      '<div class="theme-color-row"><label>Cards / Surface</label><input type="color" value="' + (c.surface || '#ffffff') + '" oninput="setThemeCustom(\'surface\', this.value)"><div style="font-size:0.75rem;color:#888">' + (c.surface || '#ffffff') + '</div></div>' +
+      '<div class="theme-color-row"><label>Text</label><input type="color" value="' + (c.text || '#222222') + '" oninput="setThemeCustom(\'text\', this.value)"><div style="font-size:0.75rem;color:#888">' + (c.text || '#222222') + '</div></div>' +
+      '<div class="theme-color-row"><label>Accent</label><input type="color" value="' + (c.accent || '#2d6a9f') + '" oninput="setThemeCustom(\'accent\', this.value)"><div style="font-size:0.75rem;color:#888">' + (c.accent || '#2d6a9f') + '</div></div>' +
+      '<div class="theme-color-row"><label>Accent (dark)</label><input type="color" value="' + (c.accentDark || '#1a3a5c') + '" oninput="setThemeCustom(\'accentDark\', this.value)"><div style="font-size:0.75rem;color:#888">' + (c.accentDark || '#1a3a5c') + '</div></div>' +
+      '<button class="btn btn-gray btn-sm" style="margin-top:6px" onclick="resetCustomTheme();renderSettings()">Reset custom colors</button>' +
+    '</div>';
+
+  // ---------- Data section ----------
+  const dataHTML = '' +
+    '<div class="shead">💾 Data &amp; backup</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Your data lives in this browser. Backup files are extra protection and let you copy data between devices.</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn btn-green" onclick="exportBackup()">💾 Save to File</button>' +
+      '<button class="btn btn-blue" onclick="importBackup()">📤 Load File</button>' +
+      '<button class="btn btn-gray" onclick="exportCSV()">📊 Export Members CSV</button>' +
+      '<button class="btn btn-gray" onclick="window.print()">🖨 Print This Page</button>' +
+      '<button class="btn btn-red" onclick="resetToOriginal()">↻ Reset to Original</button>' +
+    '</div>';
+
+  // ---------- Layout: each section in a card ----------
+  const card = (inner) => '<div style="background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px">' + inner + '</div>';
+  document.getElementById('settings-content').innerHTML =
+    card(defaultsHTML) +
+    card(featuresHTML) +
+    card(groupsHTML) +
+    card(catsHTML) +
+    card(cfHTML) +
+    card(themeHTML) +
+    card(dataHTML);
+}
+
+function setFeatureToggle(key, on) {
+  _ensureSettingsSchema();
+  if (!DB.settings.features) DB.settings.features = {};
+  DB.settings.features[key] = !!on;
+  if (key === 'memberPortal' && on) {
+    alert('👤 Member portal saved as ON.\n\nNote: this needs a backend service before members can actually log in. The toggle is saved so we can wire it up later.');
+  }
+  if (key === 'attendance' && on) {
+    alert('📅 Attendance tracking saved as ON.\n\nThe UI for marking attendance per class will be built next. The toggle is saved.');
+  }
+  logAction('settings', 'edit', 'Feature ' + key + ': ' + (on ? 'ON' : 'OFF'));
+  saveDB();
+  renderSettings();
+}
+
+// --------- Defaults handlers ---------
+function setDefaultPerClass(value) {
+  _ensureSettingsSchema();
+  const v = parseFloat(value);
+  if (isNaN(v) || v < 0) { alert('Enter a valid amount (0 or higher)'); return; }
+  DB.settings.defaultPerClass = v;
+  logAction('settings', 'edit', 'Default per-class set to $' + v);
+  saveDB();
+}
+
+// --------- Groups handlers ---------
+function addGroup() {
+  _ensureSettingsSchema();
+  const el = document.getElementById('set-new-group');
+  const name = (el.value || '').trim();
+  if (!name) { alert('Enter a group name'); return; }
+  if (DB.groups.some(g => g.name.toLowerCase() === name.toLowerCase())) { alert('That group already exists.'); return; }
+  DB.groups.push({ name: name });
+  el.value = '';
+  _syncDerivedLists();
+  logAction('group', 'add', 'Added group: ' + name);
+  saveDB();
+  renderSettings();
+}
+function renameGroup(i, newName, oldName) {
+  _ensureSettingsSchema();
+  const g = DB.groups[i]; if (!g) return;
+  const lbl = (newName || '').trim();
+  if (!lbl) { renderSettings(); return; }
+  if (lbl.toLowerCase() === (oldName || '').toLowerCase()) { g.name = lbl; saveDB(); return; }
+  if (DB.groups.some((x, j) => j !== i && x.name.toLowerCase() === lbl.toLowerCase())) { alert('A group with that name already exists.'); renderSettings(); return; }
+  // Cascade: rename in members and payments
+  const oldRe = new RegExp('\\b' + (oldName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi');
+  let touched = 0;
+  DB.members.forEach(m => { if (m.group && oldRe.test(m.group)) { m.group = m.group.replace(oldRe, lbl); touched++; } });
+  DB.payments.forEach(p => { if (p.group && oldRe.test(p.group)) { p.group = p.group.replace(oldRe, lbl); } });
+  if (Array.isArray(DB.paused)) DB.paused.forEach(p => { if (p.group && oldRe.test(p.group)) p.group = p.group.replace(oldRe, lbl); });
+  if (Array.isArray(DB.archived)) DB.archived.forEach(a => { if (a.group && oldRe.test(a.group)) a.group = a.group.replace(oldRe, lbl); });
+  g.name = lbl;
+  _syncDerivedLists();
+  logAction('group', 'edit', 'Renamed group "' + oldName + '" → "' + lbl + '" (' + touched + ' members updated)');
+  saveDB();
+  reRenderAll();
+  renderSettings();
+}
+function moveGroup(i, dir) {
+  _ensureSettingsSchema();
+  const j = i + dir;
+  if (j < 0 || j >= DB.groups.length) return;
+  const tmp = DB.groups[i]; DB.groups[i] = DB.groups[j]; DB.groups[j] = tmp;
+  _syncDerivedLists();
+  saveDB();
+  renderSettings();
+}
+function deleteGroup(i) {
+  _ensureSettingsSchema();
+  const g = DB.groups[i]; if (!g) return;
+  const inGroup = DB.members.filter(m => m.group && m.group.toLowerCase().split(',').map(s => s.trim()).includes(g.name.toLowerCase())).length;
+  const msg = inGroup
+    ? 'Delete the group "' + g.name + '"?\n\n' + inGroup + ' member(s) are in this group. They will keep the label on their record but it will no longer appear in pickers. You can re-add the group anytime.\n\nContinue?'
+    : 'Delete the group "' + g.name + '"?';
+  if (!confirm(msg)) return;
+  DB.groups.splice(i, 1);
+  _syncDerivedLists();
+  logAction('group', 'delete', 'Deleted group: ' + g.name);
+  saveDB();
+  renderSettings();
+}
+
+// --------- Categories handlers ---------
+function addCategory() {
+  _ensureSettingsSchema();
+  const nameEl = document.getElementById('set-new-cat-name');
+  const iconEl = document.getElementById('set-new-cat-icon');
+  const name = (nameEl.value || '').trim();
+  const icon = (iconEl.value || '📝').trim() || '📝';
+  if (!name) { alert('Enter a category name'); return; }
+  if (DB.categories.some(c => c.name.toLowerCase() === name.toLowerCase())) { alert('That category already exists.'); return; }
+  DB.categories.push({ name: name, icon: icon });
+  nameEl.value = ''; iconEl.value = '📝';
+  _syncDerivedLists();
+  logAction('settings', 'add', 'Added category: ' + name);
+  saveDB();
+  renderSettings();
+}
+function renameCategory(i, newName, oldName) {
+  _ensureSettingsSchema();
+  const cat = DB.categories[i]; if (!cat) return;
+  const lbl = (newName || '').trim();
+  if (!lbl) { renderSettings(); return; }
+  if (lbl === oldName) { cat.name = lbl; saveDB(); return; }
+  if (DB.categories.some((x, j) => j !== i && x.name.toLowerCase() === lbl.toLowerCase())) { alert('A category with that name already exists.'); renderSettings(); return; }
+  // Cascade rename in combos
+  if (DB.notes && Array.isArray(DB.notes.combos)) {
+    DB.notes.combos.forEach(c => { if (c.category === oldName) c.category = lbl; });
+  }
+  cat.name = lbl;
+  _syncDerivedLists();
+  logAction('settings', 'edit', 'Renamed category "' + oldName + '" → "' + lbl + '"');
+  saveDB();
+  renderSettings();
+}
+function renameCategoryIcon(i, newIcon) {
+  _ensureSettingsSchema();
+  const cat = DB.categories[i]; if (!cat) return;
+  cat.icon = (newIcon || '📝').trim() || '📝';
+  _syncDerivedLists();
+  saveDB();
+  renderSettings();
+}
+function moveCategory(i, dir) {
+  _ensureSettingsSchema();
+  const j = i + dir;
+  if (j < 0 || j >= DB.categories.length) return;
+  const tmp = DB.categories[i]; DB.categories[i] = DB.categories[j]; DB.categories[j] = tmp;
+  _syncDerivedLists();
+  saveDB();
+  renderSettings();
+}
+function deleteCategory(i) {
+  _ensureSettingsSchema();
+  const cat = DB.categories[i]; if (!cat) return;
+  const combosIn = (DB.notes && Array.isArray(DB.notes.combos)) ? DB.notes.combos.filter(c => c.category === cat.name) : [];
+  const msg = combosIn.length
+    ? 'Delete the category "' + cat.name + '"?\n\n' + combosIn.length + ' combo(s) will be moved to "Uncategorized".'
+    : 'Delete the category "' + cat.name + '"?';
+  if (!confirm(msg)) return;
+  if (combosIn.length) {
+    if (!DB.categories.some(c => c.name === 'Uncategorized')) {
+      DB.categories.push({ name: 'Uncategorized', icon: '📂' });
+    }
+    combosIn.forEach(c => { c.category = 'Uncategorized'; });
+  }
+  DB.categories = DB.categories.filter((_, j) => j !== i);
+  _syncDerivedLists();
+  logAction('settings', 'delete', 'Deleted category: ' + cat.name + (combosIn.length ? ' (moved ' + combosIn.length + ' combos to Uncategorized)' : ''));
+  saveDB();
+  renderSettings();
+}
+
 /* ============ v19: CUSTOM FIELDS (shared schema) ============ */
 function _ensureCF() {
   if (!Array.isArray(DB.customFields)) DB.customFields = [];
@@ -4360,10 +4706,10 @@ function resetCustomTheme() {
   DB.settings.theme.custom = { bg: '#f0f4f8', surface: '#ffffff', text: '#222222', accent: '#2d6a9f', accentDark: '#1a3a5c' };
   applyTheme();
   saveDB();
-  openThemePicker();
 }
 
-// Apply theme + ensure custom-fields schema before first paint
+// Apply theme + ensure all settings schemas before first paint
+_ensureSettingsSchema();
 _ensureCF();
 applyTheme();
 
@@ -4385,14 +4731,8 @@ window.addEventListener('beforeunload', function(ev) {
   }
 });
 
-// On first load, show a friendly first-time message if it's the first time
-if (!localStorage.getItem('hasSeenWelcome_v10')) {
-  setTimeout(function() {
-    if (confirm('👋 Welcome!\n\nYour changes auto-save to this browser, but for safety click "💾 Save to File" at the top every day or so. This creates a backup file on your computer.\n\nIf your browser ever loses data, click "📤 Load File" to restore.\n\nClick OK to continue.')) {
-      try { localStorage.setItem('hasSeenWelcome_v10', '1'); } catch (e) {}
-    }
-  }, 800);
-}
+// (v19) Welcome alert removed — app is now hosted at a real URL, data persistence is reliable.
+// Backups are still available via Menu → Save to File for extra safety.
 
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
