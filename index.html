@@ -1086,6 +1086,14 @@ function importBackup() {
         DB = parsed;
         if (!DB.archived) DB.archived = [];
         if (!DB.notes) DB.notes = { combos: [] };
+        // v20 BUGFIX: clean up returned-pause records that may exist in old backups
+        if (Array.isArray(DB.paused)) {
+          const before = DB.paused.length;
+          DB.paused = DB.paused.filter(p => p.stillPaused);
+          const removed = before - DB.paused.length;
+          if (removed > 0) console.log('🧹 Cleaned ' + removed + ' returned-pause records from import.');
+          DB._v13Migrated = true;
+        }
         saveDB();
         reRenderAll();
         alert('✅ Backup imported successfully!');
@@ -1574,8 +1582,11 @@ function filteredPaused() {
   return DB.paused.filter(p => {
     if (arc.has(p.name)) return false;
     if (q && !p.name.toLowerCase().includes(q)) return false;
+    // v20 BUGFIX: default filter (when "All" is selected) shows ONLY still-paused.
+    // Returned pauses are normally cleaned by the v13 migration, but old imports can re-introduce them.
     if (f === 'yes' && !p.stillPaused) return false;
     if (f === 'no' && p.stillPaused) return false;
+    if (!f && !p.stillPaused) return false; // <-- the fix
     return true;
   });
 }
@@ -1631,7 +1642,9 @@ document.getElementById('puf').addEventListener('change', renderPaused);
 function renderGroups() {
   document.getElementById('gcards-wrap').style.display = '';
   document.getElementById('gdetail').style.display = 'none';
-  const groupList = ['Sunday', 'Monday', 'Wednesday', 'Thursday'];
+  // v20 BUGFIX: use dynamic group list from settings (was hardcoded ['Sunday','Monday','Wednesday','Thursday'])
+  const groupList = (Array.isArray(ALL_GROUPS) && ALL_GROUPS.length) ? ALL_GROUPS : ['Sunday', 'Monday', 'Wednesday', 'Thursday'];
+  const dpc = (typeof _defaultPerClass === 'function') ? _defaultPerClass() : 15;
 
   // Count ACTIVE-IN-GROUP members per group (the real count, not from original data)
   const arc = archivedSet();
@@ -1643,17 +1656,18 @@ function renderGroups() {
       m.group.toLowerCase().includes(gName.toLowerCase())
     );
     const truly = groupMembers.filter(m => !isCurrentlyPaused(m.name));
-    const revenue = truly.length * 15; // $15 per class
+    // v20 BUGFIX: revenue uses each member's actual amountPerClass, not hardcoded $15
+    const revenue = truly.reduce((s, m) => s + (m.amountPerClass || dpc), 0);
     return '<div class="gcard">' +
-      '<div onclick="openGroupDetail(\'' + gName + '\')" style="cursor:pointer">' +
-        '<h3>' + gName + ' Group <span style="font-size:0.72rem;color:#888;font-weight:400">→ click to open</span></h3>' +
+      '<div onclick="openGroupDetail(\'' + esc(gName) + '\')" style="cursor:pointer">' +
+        '<h3>' + esc(gName) + ' Group <span style="font-size:0.72rem;color:#888;font-weight:400">→ click to open</span></h3>' +
         '<div class="gstat-row">' +
           '<div class="gst"><strong>' + truly.length + '</strong><span>Active</span></div>' +
-          '<div class="gst"><strong>$' + revenue + '</strong><span>$/class</span></div>' +
-          '<div class="gst"><strong>$' + truly.reduce((s, m) => s + (m.totalPaid || 0), 0).toLocaleString() + '</strong><span>Collected</span></div>' +
+          '<div class="gst"><strong>' + _money(revenue) + '</strong><span>/class</span></div>' +
+          '<div class="gst"><strong>' + _money(truly.reduce((s, m) => s + (m.totalPaid || 0), 0)) + '</strong><span>Collected</span></div>' +
         '</div>' +
       '</div>' +
-      (editMode ? '<button class="btn btn-orange btn-sm" style="margin-top:10px;width:100%" onclick="openChargeGroup(\'' + gName + '\')">💳 Charge Everyone (+$' + 15 + '/person)</button>' : '') +
+      (editMode ? '<button class="btn btn-orange btn-sm" style="margin-top:10px;width:100%" onclick="openChargeGroup(\'' + esc(gName) + '\')">💳 Charge Everyone</button>' : '') +
     '</div>';
   }).join('');
   document.getElementById('gcards').innerHTML = cards;
@@ -1686,12 +1700,15 @@ function renderGroupDetail() {
   const totalPaid = members.reduce((s, m) => s + (m.totalPaid || 0), 0);
   const owes = members.filter(m => m.balance > 0).length;
 
+  // v20 BUGFIX: use per-member amount + currency helper
+  const dpc = (typeof _defaultPerClass === 'function') ? _defaultPerClass() : 15;
+  const revPerClass = members.reduce((s, m) => s + (m.amountPerClass || dpc), 0);
   document.getElementById('gd-stats').innerHTML =
     '<div class="sc g"><div class="v">' + members.length + '</div><div class="l">Active Members</div></div>' +
     '<div class="sc r"><div class="v">' + owes + '</div><div class="l">Owe Money</div></div>' +
-    '<div class="sc r"><div class="v">$' + totalOwed.toFixed(0) + '</div><div class="l">Total Outstanding</div></div>' +
-    '<div class="sc"><div class="v">$' + totalPaid.toLocaleString() + '</div><div class="l">Total Collected</div></div>' +
-    '<div class="sc"><div class="v">$' + (members.length * 15) + '</div><div class="l">Revenue/Class</div></div>';
+    '<div class="sc r"><div class="v">' + _money(totalOwed) + '</div><div class="l">Total Outstanding</div></div>' +
+    '<div class="sc"><div class="v">' + _money(totalPaid) + '</div><div class="l">Total Collected</div></div>' +
+    '<div class="sc"><div class="v">' + _money(revPerClass) + '</div><div class="l">Revenue/Class</div></div>';
 
   document.getElementById('gd-body').innerHTML = members.length
     ? members.map(m => {
