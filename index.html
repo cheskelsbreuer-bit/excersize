@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Exercise Group — Payment Manager</title>
+<meta name="theme-color" content="#2d6a9f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Exercise Group">
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22Exercise%20Group%22%2C%22short_name%22%3A%22Exercise%22%2C%22start_url%22%3A%22.%22%2C%22scope%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f0f4f8%22%2C%22theme_color%22%3A%22%232d6a9f%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg%2520xmlns%253D%2522http%253A%252F%252Fwww.w3.org%252F2000%252Fsvg%2522%2520viewBox%253D%25220%25200%2520512%2520512%2522%253E%253Crect%2520width%253D%2522512%2522%2520height%253D%2522512%2522%2520rx%253D%252296%2522%2520fill%253D%2522%25232d6a9f%2522%252F%253E%253Ctext%2520x%253D%2522256%2522%2520y%253D%2522360%2522%2520text-anchor%253D%2522middle%2522%2520font-size%253D%2522288%2522%253E%25F0%259F%2592%25AA%253C%252Ftext%253E%253C%252Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: Arial, sans-serif; background: #f0f4f8; color: #222; min-height: 100vh; }
@@ -340,6 +346,18 @@ body.theme-dark nav#mainnav button.active { background: #444; color: #fff; }
 .processing-box { background: #f5f9ff; padding: 20px; text-align: center; border-radius: 10px; color: #2d6a9f; font-size: 0.9rem; }
 .error-box { background: #fdecea; border-left: 4px solid #c0392b; padding: 12px; border-radius: 6px; color: #6b2118; font-size: 0.85rem; margin: 10px 0; }
 
+/* ===== v20: App complexity levels ===== */
+body.level-simple [data-min-level="standard"],
+body.level-simple [data-min-level="pro"],
+body.level-standard [data-min-level="pro"] { display: none !important; }
+.level-card { background: #fff; border:2px solid #e0e5ec; border-radius:10px; padding:14px 16px; cursor:pointer; transition:all 0.15s; display:flex; gap:12px; align-items:flex-start; margin-bottom:8px; }
+.level-card:hover { border-color: #2d6a9f; box-shadow:0 2px 8px rgba(45,106,159,0.15); }
+.level-card.active { border-color: #27ae60; background:#f0fdf4; }
+.level-card .lc-icon { font-size:1.8rem; flex-shrink:0; line-height:1; }
+.level-card .lc-title { font-weight:700; color:#1a3a5c; font-size:1rem; margin-bottom:2px; }
+.level-card .lc-desc { font-size:0.82rem; color:#555; line-height:1.4; }
+.level-card.active .lc-title::after { content:' ✓'; color:#27ae60; }
+
 /* ===== v19: Theme — Light / Dark / Custom ===== */
 :root {
   --bg: #f0f4f8;
@@ -396,7 +414,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 
 <header>
   <div>
-    <h1>💪 Exercise Group</h1>
+    <h1 id="hdr-title">💪 Exercise Group</h1>
     <span class="sub" id="hdr-sub">Loading…</span>
   </div>
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -432,7 +450,8 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   <button data-tab="payments">💰 Payments</button>
   <button data-tab="groups">🗂 Groups</button>
   <button data-tab="notes">📝 Notes</button>
-  <button data-tab="log">📜 Log</button>
+  <button data-tab="reports" data-min-level="standard">📈 Reports</button>
+  <button data-tab="log" data-min-level="pro">📜 Log</button>
   <span class="spacer"></span>
   <button data-tab="paused" class="corner-btn">⏸ Paused</button>
   <button data-tab="archived" class="corner-btn">🗃 Former</button>
@@ -587,6 +606,12 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
     <input id="lq" placeholder="Type member name…" style="max-width:340px">
   </div>
   <div id="l-result"></div>
+</div>
+
+<!-- REPORTS (v20) -->
+<div id="tab-reports" class="tab">
+  <div class="notice">📈 Insights from your data. All numbers update automatically.</div>
+  <div id="reports-content"></div>
 </div>
 
 <!-- SETTINGS (v19) -->
@@ -1319,6 +1344,7 @@ function showTab(id) {
   if (id === 'notes') renderNotes();
   if (id === 'log') renderActivityLog();
   if (id === 'settings') renderSettings();
+  if (id === 'reports') renderReports();
 }
 document.querySelectorAll('#mainnav button').forEach(btn => {
   btn.addEventListener('click', function() { showTab(this.getAttribute('data-tab')); });
@@ -1364,7 +1390,7 @@ function initDashboard() {
           '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(0) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
             (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>') +
-            (m.phone ? '<button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')" title="Send reminder SMS">📱</button>' : '') +
+            (m.phone ? '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')" title="Send reminder SMS">📱</button></span>' : '') +
           '</td>' +
           '</tr>';
       }).join('')
@@ -1443,8 +1469,9 @@ function filteredMembers() {
 }
 function mRowHTML(m) {
   const lp = lastPaymentOf(m.name);
+  const tagHTML = _memberTagsHTML(m);
   return '<tr>' +
-    '<td><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + m.name + '</a></td>' +
+    '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 28) + '<span>' + m.name + '</span></a>' + (tagHTML ? '<span>' + tagHTML + '</span>' : '') + '</div></td>' +
     '<td style="font-size:0.82rem">' + m.group + '</td>' +
     '<td>' + balHTML(m.balance) + '</td>' +
     '<td>' + m.totalClasses + '</td>' +
@@ -1865,11 +1892,11 @@ function openProfile(name) {
     : m.active ? '<span class="badge b-act">Active</span>'
     : '<span class="badge b-arc">Inactive</span>';
 
-  let h = '<div class="mh"><div><h2>' + m.name + ' ' + badge + '</h2></div>';
+  let h = '<div class="mh"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div>' + _avatarHTML(m, 56) + '</div><div><h2>' + m.name + ' ' + badge + '</h2>' + (m.tags && m.tags.length ? '<div style="margin-top:4px">' + _memberTagsHTML(m) + '</div>' : '') + '</div></div>';
   h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
   h += '<button class="btn btn-blue btn-sm" onclick="printStatement(\'' + esc(m.name) + '\')">🖨 Print Statement</button>';
   if (m.phone && m.balance > 0) {
-    h += '<button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')">📱 SMS Reminder</button>';
+    h += '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')">📱 SMS Reminder</button></span>';
   }
   if (editMode && !arc) {
     h += '<button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');openAddPayment(\'' + esc(m.name) + '\')">💰 + Pay</button>';
@@ -1939,7 +1966,9 @@ function openEditMember(name) {
     '<div class="fg"><label>Start Date</label><input id="ef-start" type="date" value="' + toISODate(m.startDate || '') + '"></div>' +
     '<div class="fg"><label>End Date <span class="hint">(blank = active)</span></label><input id="ef-end" type="date" value="' + toISODate(m.endDate || '') + '"></div>' +
     '<div class="fg"><label>Balance <span class="hint">−=credit · +=owes</span></label><input id="ef-bal" type="number" value="' + m.balance + '"></div>' +
-    '<div class="fg"><label>Total Paid ($)</label><input id="ef-paid" type="number" value="' + (m.totalPaid || 0) + '"></div>' +
+    '<div class="fg"><label>Total Paid (' + _curr() + ')</label><input id="ef-paid" type="number" value="' + (m.totalPaid || 0) + '"></div>' +
+    _photoFieldHTML(m, 'ef') +
+    _tagPickerHTML(m, 'ef') +
     '</div>' +
     _customFieldsEditHTML(m) +
     '<div class="factions">' +
@@ -1964,6 +1993,8 @@ function saveEditMember(idx) {
   m.totalPaid = parseFloat(document.getElementById('ef-paid').value) || 0;
   m.active = !m.endDate;
   m.customValues = _readCustomFieldsValues();
+  m.photo = _readPhoto('ef');
+  m.tags = _readTagPicker('ef');
 
   // BUG FIX: sync archived list with active/end-date status
   const existingArc = DB.archived.find(a => a.name === m.name);
@@ -2008,6 +2039,8 @@ function openAddMember() {
     '<div class="fg"><label>Start Date</label><input id="ef-start" type="date"></div>' +
     '<div class="fg"><label>End Date <span class="hint">(blank = active)</span></label><input id="ef-end" type="date"></div>' +
     '<div class="fg"><label>Opening Balance</label><input id="ef-bal" type="number" value="0"></div>' +
+    _photoFieldHTML(null, 'ef') +
+    _tagPickerHTML(null, 'ef') +
     '</div>' +
     _customFieldsEditHTML(null) +
     '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Cancel</button>' +
@@ -2030,7 +2063,9 @@ function addNewMember() {
     totalClasses: 0, totalOwed: 0, totalPaid: 0,
     pausedClasses: 0, pausedAmount: 0,
     active: !end,
-    customValues: _readCustomFieldsValues()
+    customValues: _readCustomFieldsValues(),
+    photo: _readPhoto('ef'),
+    tags: _readTagPicker('ef')
   });
   logAction('member', 'add', 'Added new member: ' + name);
   closeOv('ov-edit');
@@ -2046,8 +2081,10 @@ function openAddPayment(preset) {
     '<div class="fgrid">' +
     '<div class="fg"><label>Member *</label><select id="ap-name"><option value="">— Select —</option>' + opts + '</select></div>' +
     '<div class="fg"><label>Date *</label><input id="ap-date" type="date" value="' + new Date().toISOString().slice(0, 10) + '"></div>' +
-    '<div class="fg"><label>Amount Paid ($) *</label><input id="ap-amt" type="number" placeholder="0"></div>' +
-    '<div class="fg"><label>&nbsp;</label><div style="font-size:0.72rem;color:#888;padding-top:8px">Pick one or more groups this payment covers</div></div>' +
+    '<div class="fg"><label>Amount Paid (' + _curr() + ') *</label><input id="ap-amt" type="number" placeholder="0"></div>' +
+    '<div class="fg"><label>Method <span class="hint">(optional)</span></label><select id="ap-method"><option value="">—</option>' +
+      (DB.settings.paymentMethods || []).map(pm => '<option value="' + esc(pm) + '">' + esc(pm) + '</option>').join('') +
+    '</select></div>' +
     '<div class="fg" style="grid-column:1/-1"><label>Group(s) *</label>' + groupPickerHTML('ap-group-picker', '') + '</div>' +
     '<div class="fg"><label>Current Balance</label><input id="ap-cur" type="number" readonly></div>' +
     '<div class="fg"><label>New Balance (auto)</label><input id="ap-new" type="number" readonly><div id="ap-hint" class="hint"></div></div>' +
@@ -2120,7 +2157,8 @@ function savePayment() {
   const d = new Date(dateRaw);
   const dateStr = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   const newBal = parseFloat(document.getElementById('ap-new').value) || 0;
-  DB.payments.unshift({ name: name, date: dateStr, paid: amt, group: grp, balance: newBal });
+  const method = (document.getElementById('ap-method') || {}).value || '';
+  DB.payments.unshift({ name: name, date: dateStr, paid: amt, group: grp, balance: newBal, method: method });
   const m = DB.members.find(x => x.name === name);
   if (m) {
     m.balance = newBal;
@@ -4142,6 +4180,114 @@ function _cancelPreview() {
   document.getElementById('paste-area').value = '';
 }
 
+/* ============ v20: REPORTS ============ */
+function renderReports() {
+  _ensureSettingsSchema();
+  const wrap = document.getElementById('reports-content');
+  if (!wrap) return;
+
+  const payments = (DB.payments || []).filter(p => p.paid !== null);
+  const totalRevenue = payments.reduce((s, p) => s + (p.paid || 0), 0);
+  const totalOutstanding = DB.members.reduce((s, m) => s + (m.balance > 0 ? m.balance : 0), 0);
+  const totalCredit = DB.members.reduce((s, m) => s + (m.balance < 0 ? -m.balance : 0), 0);
+  const activeCount = DB.members.filter(m => isActiveInGroup(m)).length;
+  const formerCount = (DB.archived || []).length;
+  const avgRevenue = activeCount ? totalRevenue / activeCount : 0;
+
+  // Revenue by month (last 12 months)
+  const monthly = {};
+  payments.forEach(p => {
+    const d = new Date(p.date);
+    if (isNaN(d.getTime())) return;
+    const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    monthly[key] = (monthly[key] || 0) + (p.paid || 0);
+  });
+  const months = Object.keys(monthly).sort().slice(-12);
+  const maxMonthly = Math.max(1, ...months.map(k => monthly[k]));
+  const monthlyRows = months.map(k => {
+    const v = monthly[k];
+    const pct = (v / maxMonthly) * 100;
+    return '<tr><td style="white-space:nowrap">' + k + '</td>' +
+      '<td style="width:100%"><div style="background:#e8eef5;border-radius:4px;height:18px;position:relative"><div style="background:linear-gradient(90deg,#2d6a9f,#27ae60);height:100%;width:' + pct + '%;border-radius:4px"></div></div></td>' +
+      '<td style="text-align:right;white-space:nowrap;font-weight:700">' + _money(v) + '</td></tr>';
+  }).join('') || '<tr><td colspan="3" class="empty">No payment data yet</td></tr>';
+
+  // Revenue by group
+  const byGroup = {};
+  ALL_GROUPS.forEach(g => byGroup[g] = 0);
+  payments.forEach(p => {
+    const groups = (p.group || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!groups.length) { byGroup['(no group)'] = (byGroup['(no group)'] || 0) + (p.paid || 0); return; }
+    const per = (p.paid || 0) / groups.length;
+    groups.forEach(g => { byGroup[g] = (byGroup[g] || 0) + per; });
+  });
+  const groupKeys = Object.keys(byGroup).filter(k => byGroup[k] > 0).sort((a, b) => byGroup[b] - byGroup[a]);
+  const maxGroup = Math.max(1, ...groupKeys.map(k => byGroup[k]));
+  const groupRows = groupKeys.map(k => {
+    const v = byGroup[k]; const pct = (v / maxGroup) * 100;
+    return '<tr><td style="white-space:nowrap">' + esc(k) + '</td>' +
+      '<td style="width:100%"><div style="background:#e8eef5;border-radius:4px;height:18px"><div style="background:#2d6a9f;height:100%;width:' + pct + '%;border-radius:4px"></div></div></td>' +
+      '<td style="text-align:right;white-space:nowrap;font-weight:700">' + _money(v) + '</td></tr>';
+  }).join('') || '<tr><td colspan="3" class="empty">No data</td></tr>';
+
+  // Top 10 payers
+  const byMember = {};
+  payments.forEach(p => { byMember[p.name] = (byMember[p.name] || 0) + (p.paid || 0); });
+  const top = Object.keys(byMember).sort((a, b) => byMember[b] - byMember[a]).slice(0, 10);
+  const topRows = top.map((name, i) => {
+    const m = DB.members.find(x => x.name === name) || (DB.archived || []).find(x => x.name === name) || { name: name };
+    return '<tr><td style="text-align:center;color:#888;width:30px">' + (i + 1) + '</td>' +
+      '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 24) + '<span>' + esc(name) + '</span></a></div></td>' +
+      '<td style="text-align:right;font-weight:700">' + _money(byMember[name]) + '</td></tr>';
+  }).join('') || '<tr><td colspan="3" class="empty">No data yet</td></tr>';
+
+  // Top 10 owers
+  const owers = DB.members.filter(m => m.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 10);
+  const owerRows = owers.map((m, i) =>
+    '<tr><td style="text-align:center;color:#888;width:30px">' + (i + 1) + '</td>' +
+      '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 24) + '<span>' + esc(m.name) + '</span></a></div></td>' +
+      '<td style="text-align:right;font-weight:700;color:#c0392b">' + _money(m.balance) + '</td></tr>'
+  ).join('') || '<tr><td colspan="3" class="empty">🎉 Nobody owes</td></tr>';
+
+  // Payment method breakdown
+  const byMethod = {};
+  payments.forEach(p => { const m = p.method || 'Unspecified'; byMethod[m] = (byMethod[m] || 0) + (p.paid || 0); });
+  const methodKeys = Object.keys(byMethod).sort((a, b) => byMethod[b] - byMethod[a]);
+  const methodRows = methodKeys.length
+    ? methodKeys.map(k => '<tr><td>' + esc(k) + '</td><td style="text-align:right;font-weight:700">' + _money(byMethod[k]) + '</td></tr>').join('')
+    : '<tr><td colspan="2" class="empty">No methods recorded yet — start picking one when you record a payment.</td></tr>';
+
+  // Tag breakdown
+  const byTag = {};
+  DB.members.forEach(m => { (m.tags || []).forEach(t => { byTag[t] = (byTag[t] || 0) + 1; }); });
+  const tagKeys = Object.keys(byTag).sort();
+  const tagRows = tagKeys.length
+    ? tagKeys.map(k => '<tr><td>' + _tagChipHTML(k) + '</td><td style="text-align:right;font-weight:700">' + byTag[k] + ' member' + (byTag[k] === 1 ? '' : 's') + '</td></tr>').join('')
+    : '<tr><td colspan="2" class="empty">No tags assigned yet — add tags in Settings, then attach them to members.</td></tr>';
+
+  const card = (title, body) => '<div style="background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px"><div class="shead">' + title + '</div>' + body + '</div>';
+
+  wrap.innerHTML =
+    '<div class="stats-row">' +
+      '<div class="sc"><div class="v">' + _money(totalRevenue) + '</div><div class="l">Total Collected</div></div>' +
+      '<div class="sc r"><div class="v">' + _money(totalOutstanding) + '</div><div class="l">Outstanding</div></div>' +
+      '<div class="sc g"><div class="v">' + _money(totalCredit) + '</div><div class="l">Credit Balance</div></div>' +
+      '<div class="sc o"><div class="v">' + _money(avgRevenue) + '</div><div class="l">Avg Revenue/Member</div></div>' +
+      '<div class="sc"><div class="v">' + (activeCount + formerCount) + '</div><div class="l">All-Time Members</div></div>' +
+    '</div>' +
+    card('💰 Revenue by month (last 12)', '<div class="tw"><table>' + monthlyRows + '</table></div>') +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+      card('🗂 Revenue by group', '<div class="tw"><table>' + groupRows + '</table></div>') +
+      card('💳 By payment method', '<div class="tw"><table>' + methodRows + '</table></div>') +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+      card('🏆 Top 10 payers (all-time)', '<div class="tw"><table>' + topRows + '</table></div>') +
+      card('⚠ Top 10 currently owing', '<div class="tw"><table>' + owerRows + '</table></div>') +
+    '</div>' +
+    card('🏷 Tag breakdown', '<div class="tw"><table>' + tagRows + '</table></div>') +
+    '<div style="text-align:center;margin-top:16px"><button class="btn btn-blue" onclick="window.print()">🖨 Print this report</button></div>';
+}
+
 /* ============ v19: SETTINGS — schema, sync, render ============ */
 
 const _DEFAULT_CAT_ICONS = { 'Aerobics': '🏃', 'Ball': '⚽', 'Aqua': '🏊', 'Weights': '🏋️', 'Other': '📝', 'Uncategorized': '📂' };
@@ -4155,7 +4301,63 @@ function _ensureSettingsSchema() {
   if (!Array.isArray(DB.groups) || !DB.groups.length) {
     DB.groups = ['Sunday', 'Monday', 'Wednesday', 'Thursday'].map(n => ({ name: n }));
   }
+  // v20: branding, formatting, communication, payment methods, tags
+  if (!DB.settings.branding || typeof DB.settings.branding !== 'object') {
+    DB.settings.branding = { name: 'Exercise Group', subtitle: '', emoji: '💪' };
+  }
+  if (typeof DB.settings.currency !== 'string') DB.settings.currency = '$';
+  if (typeof DB.settings.dateFormat !== 'string') DB.settings.dateFormat = 'MM/DD/YYYY';
+  if (typeof DB.settings.smsTemplate !== 'string') {
+    DB.settings.smsTemplate = 'Hi {firstName}! Just a friendly reminder that your balance for exercise class is {currency}{balance}. Thanks!';
+  }
+  if (!Array.isArray(DB.settings.paymentMethods) || !DB.settings.paymentMethods.length) {
+    DB.settings.paymentMethods = ['Cash', 'Check', 'Venmo', 'Zelle', 'Other'];
+  }
+  if (!Array.isArray(DB.tags)) DB.tags = []; // [{name, color}]
+  // v20: App complexity level
+  if (typeof DB.settings.appLevel !== 'string' || !['simple','standard','pro'].includes(DB.settings.appLevel)) {
+    DB.settings.appLevel = 'standard';
+  }
   _syncDerivedLists();
+}
+
+// v20: Apply app complexity level (controls what's visible)
+function applyAppLevel() {
+  _ensureSettingsSchema();
+  const lvl = DB.settings.appLevel || 'standard';
+  document.body.classList.remove('level-simple', 'level-standard', 'level-pro');
+  document.body.classList.add('level-' + lvl);
+}
+
+// v20: helpers for currency and date formatting
+function _curr() { return (DB.settings && DB.settings.currency) ? DB.settings.currency : '$'; }
+function _money(n) {
+  const v = (typeof n === 'number' && !isNaN(n)) ? n : 0;
+  return _curr() + Math.round(v).toLocaleString();
+}
+function _fmtDate(s) {
+  // Accepts "MM/DD/YYYY" or ISO; returns formatted per DB.settings.dateFormat
+  if (!s) return '';
+  let d;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) d = new Date(s);
+  else if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) {
+    const [m, day, y] = s.split('/'); d = new Date(parseInt(y), parseInt(m) - 1, parseInt(day));
+  } else d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = (DB.settings && DB.settings.dateFormat) || 'MM/DD/YYYY';
+  if (fmt === 'DD/MM/YYYY') return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+  if (fmt === 'YYYY-MM-DD') return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + '/' + d.getFullYear();
+}
+function _fillSmsTemplate(m, balance) {
+  const tpl = (DB.settings && DB.settings.smsTemplate) || 'Hi {firstName}! Balance: {currency}{balance}.';
+  return tpl
+    .replace(/\{firstName\}/g, m.name.split(' ')[0])
+    .replace(/\{name\}/g, m.name)
+    .replace(/\{currency\}/g, _curr())
+    .replace(/\{balance\}/g, Math.round(balance || 0).toString())
+    .replace(/\{appName\}/g, (DB.settings && DB.settings.branding && DB.settings.branding.name) || 'Exercise Group');
 }
 function _syncDerivedLists() {
   if (Array.isArray(DB.categories)) {
@@ -4182,11 +4384,48 @@ function renderSettings() {
   const t = DB.settings.theme || { mode: 'light', custom: {} };
   const c = t.custom || {};
 
+  // ---------- App level section (always visible at the top) ----------
+  const lvl = DB.settings.appLevel || 'standard';
+  const levelCard = (key, icon, title, desc) =>
+    '<div class="level-card' + (lvl === key ? ' active' : '') + '" onclick="setAppLevel(\'' + key + '\')">' +
+      '<div class="lc-icon">' + icon + '</div>' +
+      '<div><div class="lc-title">' + title + '</div><div class="lc-desc">' + desc + '</div></div>' +
+    '</div>';
+  const appLevelHTML = '' +
+    '<div class="shead">📐 App complexity level</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:10px">How much of the app should be visible? Pick simple for older users or anyone new. Switch any time — your data is never lost.</p>' +
+    levelCard('simple', '🌱', 'Simple', 'Just Dashboard, Members, Payments. Perfect for someone who only needs the basics. Settings stays minimal.') +
+    levelCard('standard', '🌿', 'Standard', 'Adds Groups, Notes, Reports, Paused, Former. Most settings available. Recommended for everyday use.') +
+    levelCard('pro', '🌳', 'Pro', 'Everything: Log, Lookup, all settings including tags, currency, date format, optional features.');
+
+  // ---------- Branding section ----------
+  const b = DB.settings.branding;
+  const brandingHTML = '' +
+    '<div class="shead">🎨 App branding</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Customize the app name, emoji, and subtitle shown in the header.</p>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>App Name</label><input type="text" value="' + _escAttr(b.name) + '" onchange="setBranding(\'name\', this.value)"></div>' +
+      '<div class="fg"><label>Header Emoji</label><input type="text" maxlength="4" value="' + _escAttr(b.emoji) + '" onchange="setBranding(\'emoji\', this.value)" style="text-align:center;font-size:1.3rem"></div>' +
+      '<div class="fg" style="grid-column:1/-1"><label>Subtitle <span class="hint">(shown in browser tab title)</span></label><input type="text" value="' + _escAttr(b.subtitle) + '" onchange="setBranding(\'subtitle\', this.value)" placeholder="e.g. Payment Manager"></div>' +
+    '</div>';
+
+  // ---------- Formatting section ----------
+  const formattingHTML = '' +
+    '<div class="shead">🌐 Currency &amp; date format</div>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>Currency Symbol</label><input type="text" maxlength="3" value="' + _escAttr(_curr()) + '" onchange="setCurrency(this.value)" style="text-align:center;font-size:1.1rem"><div class="hint">Examples: $, ₪, €, £, ¥</div></div>' +
+      '<div class="fg"><label>Date Format</label><select onchange="setDateFormat(this.value)">' +
+        '<option value="MM/DD/YYYY"' + (DB.settings.dateFormat === 'MM/DD/YYYY' ? ' selected' : '') + '>MM/DD/YYYY (US)</option>' +
+        '<option value="DD/MM/YYYY"' + (DB.settings.dateFormat === 'DD/MM/YYYY' ? ' selected' : '') + '>DD/MM/YYYY (Most of world)</option>' +
+        '<option value="YYYY-MM-DD"' + (DB.settings.dateFormat === 'YYYY-MM-DD' ? ' selected' : '') + '>YYYY-MM-DD (ISO)</option>' +
+      '</select></div>' +
+    '</div>';
+
   // ---------- Defaults section ----------
   const defaultsHTML = '' +
     '<div class="shead">💰 Defaults for new members</div>' +
     '<div class="fgrid" style="margin-bottom:14px">' +
-      '<div class="fg"><label>Default per-class amount ($)</label>' +
+      '<div class="fg"><label>Default per-class amount (' + _curr() + ')</label>' +
         '<input id="set-default-pc" type="number" min="0" step="0.01" value="' + _defaultPerClass() + '" onchange="setDefaultPerClass(this.value)">' +
         '<div class="hint">New members start with this. You can still change it per member.</div>' +
       '</div>' +
@@ -4300,6 +4539,67 @@ function renderSettings() {
       '<button class="btn btn-gray btn-sm" style="margin-top:6px" onclick="resetCustomTheme();renderSettings()">Reset custom colors</button>' +
     '</div>';
 
+  // ---------- SMS template section ----------
+  const smsTplHTML = '' +
+    '<div class="shead">💬 SMS reminder template</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">The text sent when you click 📱 next to a member who owes money.<br>Available placeholders: <code>{firstName}</code>, <code>{name}</code>, <code>{currency}</code>, <code>{balance}</code>, <code>{appName}</code></p>' +
+    '<textarea id="set-sms-template" rows="3" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:Arial;resize:vertical" onchange="setSmsTemplate(this.value)">' + esc(DB.settings.smsTemplate) + '</textarea>' +
+    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">' +
+      '<button class="btn btn-orange btn-sm" onclick="bulkSMSReminders()">📱 Send to All Who Owe</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="resetSmsTemplate()">Reset to default</button>' +
+    '</div>';
+
+  // ---------- Payment methods section ----------
+  const pmList = DB.settings.paymentMethods || [];
+  let pmRows = pmList.map((pm, i) =>
+    '<div class="cf-mgr-row">' +
+      '<input type="text" value="' + _escAttr(pm) + '" onchange="renamePaymentMethod(' + i + ', this.value)">' +
+      '<button class="btn btn-gray btn-sm" onclick="movePaymentMethod(' + i + ',-1)" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="movePaymentMethod(' + i + ',1)" ' + (i === pmList.length - 1 ? 'disabled' : '') + '>↓</button>' +
+      '<button class="btn btn-red btn-sm" onclick="deletePaymentMethod(' + i + ')">✕</button>' +
+    '</div>'
+  ).join('');
+  if (!pmList.length) pmRows = '<div class="cf-empty-hint">No methods yet. Add one below ↓</div>';
+  const paymentMethodsHTML = '' +
+    '<div class="shead">💳 Payment methods</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">When recording a payment, you can pick from this list. Add Cash, Check, Venmo, Zelle, etc.</p>' +
+    '<div>' + pmRows + '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+      '<input id="set-new-pm" type="text" placeholder="New method (e.g. PayPal)" style="flex:1;min-width:160px;padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:0.88rem">' +
+      '<button class="btn btn-green btn-sm" onclick="addPaymentMethod()">+ Add</button>' +
+    '</div>';
+
+  // ---------- Member tags section ----------
+  const tagList = DB.tags || [];
+  let tagRows = tagList.map((t2, i) =>
+    '<div class="cf-mgr-row">' +
+      '<input type="color" value="' + _escAttr(t2.color || '#888888') + '" onchange="setTagColor(' + i + ', this.value)" style="flex:0 0 50px;height:34px;padding:2px;border:1px solid #ccc;border-radius:4px">' +
+      '<input type="text" value="' + _escAttr(t2.name) + '" onchange="renameTag(' + i + ', this.value)">' +
+      '<button class="btn btn-gray btn-sm" onclick="moveTag(' + i + ',-1)" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="moveTag(' + i + ',1)" ' + (i === tagList.length - 1 ? 'disabled' : '') + '>↓</button>' +
+      '<button class="btn btn-red btn-sm" onclick="deleteTag(' + i + ')">✕</button>' +
+    '</div>'
+  ).join('');
+  if (!tagList.length) tagRows = '<div class="cf-empty-hint">No tags yet. Add one below ↓ (e.g. VIP, New, Discount)</div>';
+  const tagsHTML = '' +
+    '<div class="shead">🏷 Member tags</div>' +
+    '<p style="font-size:0.82rem;color:#555;margin-bottom:8px">Colored labels you can attach to members. Examples: VIP, Discount, New Member, Trial.</p>' +
+    '<div>' + tagRows + '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+      '<input id="set-new-tag-color" type="color" value="#27ae60" style="flex:0 0 50px;height:34px;padding:2px;border:1px solid #ccc;border-radius:4px">' +
+      '<input id="set-new-tag-name" type="text" placeholder="New tag (e.g. VIP)" style="flex:1;min-width:160px;padding:7px 9px;border:1px solid #ccc;border-radius:6px;font-size:0.88rem">' +
+      '<button class="btn btn-green btn-sm" onclick="addTag()">+ Add Tag</button>' +
+    '</div>';
+
+  // ---------- Install / PWA tip section ----------
+  const installHTML = '' +
+    '<div class="shead">📱 Install as an app</div>' +
+    '<p style="font-size:0.85rem;color:#555;line-height:1.5">' +
+    '<strong>On desktop (Chrome/Edge):</strong> Look for the install icon ⊕ in the address bar, or three-dot menu → "Install ' + esc(b.name) + '..."<br><br>' +
+    '<strong>On phone (iOS Safari):</strong> Share button → "Add to Home Screen"<br>' +
+    '<strong>On phone (Android Chrome):</strong> Three-dot menu → "Add to Home Screen" or "Install app"<br><br>' +
+    'Once installed, the app gets its own icon and opens in fullscreen — feels native.</p>';
+
   // ---------- Data section ----------
   const dataHTML = '' +
     '<div class="shead">💾 Data &amp; backup</div>' +
@@ -4312,20 +4612,273 @@ function renderSettings() {
       '<button class="btn btn-red" onclick="resetToOriginal()">↻ Reset to Original</button>' +
     '</div>';
 
-  // ---------- Layout: each section in a card ----------
-  const card = (inner) => '<div style="background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px">' + inner + '</div>';
+  // ---------- Layout: each section in a card with min-level visibility ----------
+  const card = (inner, minLevel) => '<div data-min-level="' + (minLevel || '') + '" style="background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px">' + inner + '</div>';
   document.getElementById('settings-content').innerHTML =
-    card(defaultsHTML) +
-    card(featuresHTML) +
-    card(groupsHTML) +
-    card(catsHTML) +
-    card(cfHTML) +
+    card(appLevelHTML) +
+    card(brandingHTML, 'standard') +
+    card(formattingHTML, 'pro') +
+    card(defaultsHTML, 'standard') +
+    card(featuresHTML, 'pro') +
+    card(groupsHTML, 'standard') +
+    card(catsHTML, 'standard') +
+    card(cfHTML, 'standard') +
+    card(tagsHTML, 'pro') +
+    card(paymentMethodsHTML, 'standard') +
+    card(smsTplHTML, 'standard') +
     card(themeHTML) +
+    card(installHTML, 'standard') +
     card(dataHTML);
+}
+
+// v20: Set the app complexity level (with confirmation)
+function setAppLevel(level) {
+  if (!['simple', 'standard', 'pro'].includes(level)) return;
+  _ensureSettingsSchema();
+  if (DB.settings.appLevel === level) return; // no change
+  const labels = { simple: '🌱 Simple', standard: '🌿 Standard', pro: '🌳 Pro' };
+  if (!confirm('Switch app to "' + labels[level] + '" mode?\n\nThis changes which features are visible. Your data is not touched and you can switch back any time.')) {
+    renderSettings(); // refresh active state
+    return;
+  }
+  DB.settings.appLevel = level;
+  applyAppLevel();
+  logAction('settings', 'edit', 'App level: ' + level);
+  saveDB();
+  renderSettings();
+}
+
+// --------- Branding handlers ---------
+function setBranding(key, value) {
+  _ensureSettingsSchema();
+  DB.settings.branding[key] = (value || '').trim();
+  applyBranding();
+  logAction('settings', 'edit', 'Branding ' + key + ': ' + value);
+  saveDB();
+}
+// --------- Currency / date handlers ---------
+function setCurrency(value) {
+  _ensureSettingsSchema();
+  const v = (value || '$').trim() || '$';
+  DB.settings.currency = v;
+  logAction('settings', 'edit', 'Currency: ' + v);
+  saveDB();
+  reRenderAll();
+  renderSettings();
+}
+function setDateFormat(value) {
+  _ensureSettingsSchema();
+  DB.settings.dateFormat = value || 'MM/DD/YYYY';
+  logAction('settings', 'edit', 'Date format: ' + value);
+  saveDB();
+  reRenderAll();
+}
+// --------- SMS template handlers ---------
+function setSmsTemplate(value) {
+  _ensureSettingsSchema();
+  DB.settings.smsTemplate = (value || '').trim() || 'Hi {firstName}! Balance: {currency}{balance}.';
+  logAction('settings', 'edit', 'SMS template updated');
+  saveDB();
+}
+function resetSmsTemplate() {
+  _ensureSettingsSchema();
+  DB.settings.smsTemplate = 'Hi {firstName}! Just a friendly reminder that your balance for exercise class is {currency}{balance}. Thanks!';
+  saveDB();
+  renderSettings();
+}
+function bulkSMSReminders() {
+  _ensureSettingsSchema();
+  const owing = DB.members.filter(m => m.balance > 0 && m.phone && (m.active !== false));
+  if (!owing.length) { alert('🎉 Nobody owes money right now (or nobody has a phone number on file).'); return; }
+  if (!confirm('📱 Open SMS reminders for ' + owing.length + ' member(s) who owe money?\n\nYour messaging app will open one tab per member with the message pre-filled. You can review and send each one.')) return;
+  let opened = 0;
+  owing.forEach(m => {
+    const msg = _fillSmsTemplate(m, m.balance);
+    const phone = (m.phone || '').replace(/[^\d+]/g, '');
+    const url = 'sms:' + phone + '?body=' + encodeURIComponent(msg);
+    const win = window.open(url, '_blank');
+    if (win) opened++;
+  });
+  logAction('member', 'sms', 'Bulk SMS opened for ' + owing.length + ' members');
+  alert('📱 Opened ' + opened + ' message tabs. Review and send each one in your messaging app.');
+}
+
+// --------- Payment methods handlers ---------
+function addPaymentMethod() {
+  _ensureSettingsSchema();
+  const el = document.getElementById('set-new-pm');
+  const name = (el.value || '').trim(); if (!name) { alert('Enter a method name'); return; }
+  if (DB.settings.paymentMethods.some(p => p.toLowerCase() === name.toLowerCase())) { alert('That method already exists.'); return; }
+  DB.settings.paymentMethods.push(name); el.value = '';
+  saveDB(); renderSettings();
+}
+function renamePaymentMethod(i, newName) {
+  _ensureSettingsSchema();
+  const v = (newName || '').trim(); if (!v) { renderSettings(); return; }
+  DB.settings.paymentMethods[i] = v; saveDB();
+}
+function movePaymentMethod(i, dir) {
+  _ensureSettingsSchema();
+  const j = i + dir; if (j < 0 || j >= DB.settings.paymentMethods.length) return;
+  const t = DB.settings.paymentMethods[i]; DB.settings.paymentMethods[i] = DB.settings.paymentMethods[j]; DB.settings.paymentMethods[j] = t;
+  saveDB(); renderSettings();
+}
+function deletePaymentMethod(i) {
+  _ensureSettingsSchema();
+  const m = DB.settings.paymentMethods[i]; if (!m) return;
+  if (!confirm('Delete payment method "' + m + '"?')) return;
+  DB.settings.paymentMethods.splice(i, 1);
+  saveDB(); renderSettings();
+}
+
+// --------- Tag handlers ---------
+function addTag() {
+  _ensureSettingsSchema();
+  const nameEl = document.getElementById('set-new-tag-name');
+  const colorEl = document.getElementById('set-new-tag-color');
+  const name = (nameEl.value || '').trim();
+  const color = colorEl.value || '#27ae60';
+  if (!name) { alert('Enter a tag name'); return; }
+  if (DB.tags.some(t => t.name.toLowerCase() === name.toLowerCase())) { alert('That tag already exists.'); return; }
+  DB.tags.push({ name: name, color: color }); nameEl.value = ''; colorEl.value = '#27ae60';
+  saveDB(); renderSettings();
+}
+function renameTag(i, newName) {
+  _ensureSettingsSchema();
+  const v = (newName || '').trim(); if (!v) { renderSettings(); return; }
+  const old = DB.tags[i].name;
+  DB.tags[i].name = v;
+  // Cascade rename in members
+  DB.members.forEach(m => {
+    if (Array.isArray(m.tags)) {
+      const idx = m.tags.indexOf(old);
+      if (idx >= 0) m.tags[idx] = v;
+    }
+  });
+  saveDB();
+}
+function setTagColor(i, color) {
+  _ensureSettingsSchema();
+  DB.tags[i].color = color || '#888888';
+  saveDB(); reRenderAll();
+}
+function moveTag(i, dir) {
+  _ensureSettingsSchema();
+  const j = i + dir; if (j < 0 || j >= DB.tags.length) return;
+  const t = DB.tags[i]; DB.tags[i] = DB.tags[j]; DB.tags[j] = t;
+  saveDB(); renderSettings();
+}
+function deleteTag(i) {
+  _ensureSettingsSchema();
+  const t = DB.tags[i]; if (!t) return;
+  if (!confirm('Delete tag "' + t.name + '"? It will also be removed from all members.')) return;
+  DB.tags.splice(i, 1);
+  DB.members.forEach(m => {
+    if (Array.isArray(m.tags)) m.tags = m.tags.filter(tn => tn !== t.name);
+  });
+  saveDB(); renderSettings(); reRenderAll();
+}
+
+// --------- Tag rendering helpers ---------
+function _tagChipHTML(tagName) {
+  _ensureSettingsSchema();
+  const t = DB.tags.find(x => x.name === tagName);
+  if (!t) return '';
+  return '<span style="display:inline-block;background:' + t.color + ';color:#fff;padding:1px 7px;border-radius:10px;font-size:0.7rem;font-weight:700;margin-right:3px;vertical-align:middle">' + esc(t.name) + '</span>';
+}
+function _memberTagsHTML(m) {
+  if (!m || !Array.isArray(m.tags) || !m.tags.length) return '';
+  // Tags are a Pro-level feature — wrap so they hide in Simple/Standard
+  return '<span data-min-level="pro">' + m.tags.map(_tagChipHTML).join('') + '</span>';
+}
+
+// --------- Member photo helpers ---------
+function _avatarHTML(m, size) {
+  const px = size || 36;
+  if (m && m.photo) {
+    return '<img src="' + esc(m.photo) + '" style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;object-fit:cover;vertical-align:middle;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.15)">';
+  }
+  // Initials fallback
+  const name = (m && m.name) || '?';
+  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(s => s[0].toUpperCase()).join('') || '?';
+  const colors = ['#2d6a9f', '#27ae60', '#e67e22', '#7c3aed', '#0288d1', '#d97706', '#c0392b'];
+  // Hash name to a color index
+  let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  const bg = colors[Math.abs(h) % colors.length];
+  return '<span style="display:inline-flex;align-items:center;justify-content:center;width:' + px + 'px;height:' + px + 'px;border-radius:50%;background:' + bg + ';color:#fff;font-weight:700;font-size:' + Math.round(px * 0.4) + 'px;vertical-align:middle">' + initials + '</span>';
+}
+function _onPhotoFileChange(input, prefix) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  if (f.size > 2 * 1024 * 1024) { alert('Photo too large. Please pick something under 2MB.'); input.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const dataURL = e.target.result;
+    const preview = document.getElementById(prefix + '-photo-preview');
+    if (preview) preview.innerHTML = '<img src="' + dataURL + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid #2d6a9f">';
+    const hidden = document.getElementById(prefix + '-photo-data');
+    if (hidden) hidden.value = dataURL;
+  };
+  reader.readAsDataURL(f);
+}
+function _photoFieldHTML(m, prefix) {
+  const has = m && m.photo;
+  const preview = has
+    ? '<img src="' + esc(m.photo) + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid #2d6a9f">'
+    : _avatarHTML(m || { name: 'New' }, 80);
+  return '<div class="fg" style="grid-column:1/-1" data-min-level="pro"><label>📷 Photo <span class="hint">(optional, under 2MB)</span></label>' +
+    '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">' +
+      '<div id="' + prefix + '-photo-preview">' + preview + '</div>' +
+      '<input type="file" accept="image/*" id="' + prefix + '-photo-input" onchange="_onPhotoFileChange(this, \'' + prefix + '\')" style="font-size:0.85rem">' +
+      (has ? '<button type="button" class="btn btn-gray btn-sm" onclick="_clearPhoto(\'' + prefix + '\')">Remove</button>' : '') +
+      '<input type="hidden" id="' + prefix + '-photo-data" value="' + (has ? _escAttr(m.photo) : '') + '">' +
+    '</div></div>';
+}
+function _clearPhoto(prefix) {
+  const preview = document.getElementById(prefix + '-photo-preview');
+  if (preview) preview.innerHTML = _avatarHTML({ name: 'New' }, 80);
+  const hidden = document.getElementById(prefix + '-photo-data');
+  if (hidden) hidden.value = '';
+  const input = document.getElementById(prefix + '-photo-input');
+  if (input) input.value = '';
+}
+function _readPhoto(prefix) {
+  const hidden = document.getElementById(prefix + '-photo-data');
+  return hidden ? hidden.value : '';
+}
+function _tagPickerHTML(m, prefix) {
+  _ensureSettingsSchema();
+  if (!DB.tags.length) return '';
+  const sel = (m && Array.isArray(m.tags)) ? m.tags : [];
+  return '<div class="fg" style="grid-column:1/-1" data-min-level="pro"><label>🏷 Tags</label>' +
+    '<div id="' + prefix + '-tag-picker" class="gpicker">' +
+      DB.tags.map(t => {
+        const on = sel.includes(t.name);
+        return '<label class="' + (on ? 'checked' : '') + '" style="background:' + (on ? t.color : '#f0f4f8') + ';color:' + (on ? '#fff' : '#555') + ';border-color:' + (on ? t.color : '#e0e5ec') + '">' +
+          '<input type="checkbox" data-tag="' + _escAttr(t.name) + '" value="' + _escAttr(t.name) + '"' + (on ? ' checked' : '') +
+          ' onchange="this.parentElement.style.background=this.checked?\'' + t.color + '\':\'#f0f4f8\';this.parentElement.style.color=this.checked?\'#fff\':\'#555\'">' + esc(t.name) +
+        '</label>';
+      }).join('') +
+    '</div></div>';
+}
+function _readTagPicker(prefix) {
+  const el = document.getElementById(prefix + '-tag-picker');
+  if (!el) return [];
+  return [...el.querySelectorAll('input[type="checkbox"]:checked')].map(c => c.value);
 }
 
 function setFeatureToggle(key, on) {
   _ensureSettingsSchema();
+  const labels = {
+    attendance: '📅 Class attendance tracking',
+    memberPortal: '👤 Member self-service portal'
+  };
+  const label = labels[key] || key;
+  // v20: confirmation prompt on every toggle change
+  if (!confirm('Are you sure you want to turn ' + label + ' ' + (on ? 'ON' : 'OFF') + '?')) {
+    renderSettings(); // refresh to bounce checkbox back to its real state
+    return;
+  }
   if (!DB.settings.features) DB.settings.features = {};
   DB.settings.features[key] = !!on;
   if (key === 'memberPortal' && on) {
@@ -4495,7 +5048,7 @@ function _customFieldsEditHTML(m) {
   _ensureCF();
   if (!DB.customFields.length) return '';
   const vals = (m && m.customValues) || {};
-  let h = '<div class="shead" style="margin-top:14px">📋 Custom Fields</div><div class="fgrid">';
+  let h = '<div data-min-level="standard"><div class="shead" style="margin-top:14px">📋 Custom Fields</div><div class="fgrid">';
   DB.customFields.forEach(f => {
     const v = vals[f.key] != null ? vals[f.key] : '';
     const id = 'cf-input-' + f.key;
@@ -4509,7 +5062,7 @@ function _customFieldsEditHTML(m) {
       h += '<div class="fg"><label>' + esc(f.label) + '</label><input type="text" id="' + id + '" data-cfkey="' + esc(f.key) + '" value="' + esc(v) + '"></div>';
     }
   });
-  h += '</div>';
+  h += '</div></div>';
   return h;
 }
 function _readCustomFieldsValues() {
@@ -4708,10 +5261,21 @@ function resetCustomTheme() {
   saveDB();
 }
 
+// v20: Apply branding from DB.settings to the header and document title
+function applyBranding() {
+  _ensureSettingsSchema();
+  const b = DB.settings.branding || { name: 'Exercise Group', subtitle: '', emoji: '💪' };
+  const title = document.getElementById('hdr-title');
+  if (title) title.textContent = (b.emoji || '💪') + ' ' + (b.name || 'Exercise Group');
+  document.title = (b.name || 'Exercise Group') + (b.subtitle ? ' — ' + b.subtitle : '');
+}
+
 // Apply theme + ensure all settings schemas before first paint
 _ensureSettingsSchema();
 _ensureCF();
+applyBranding();
 applyTheme();
+applyAppLevel();
 
 /* ============ INIT ============ */
 initDashboard();
