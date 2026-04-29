@@ -2439,7 +2439,7 @@ function savePayment() {
 
   if (typeof _pushUndo === 'function') _pushUndo('Payment ' + _money(amt) + ' for ' + name);
   DB.payments.unshift({ name: name, date: dateStr, paid: amt, group: grp, balance: newBal, method: method, savedAt: Date.now() });
-  const m = DB.members.find(x => x.name === name);
+  // m was already declared above for the anomaly check
   if (m) {
     m.balance = newBal;
     m.totalPaid = (m.totalPaid || 0) + amt;
