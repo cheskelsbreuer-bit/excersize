@@ -365,8 +365,8 @@ body.theme-dark nav#mainnav button.active { background: #444; color: #fff; }
 }
 #tour-spot { position: fixed; border-radius: 10px; pointer-events: none; box-shadow: 0 0 0 4px #2d6a9f, 0 0 0 9999px rgba(0,0,0,0.72); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); z-index: 9000; animation: tour-spot-pulse 2s ease-in-out infinite; }
 #tour-spot.centered { box-shadow: 0 0 0 0 transparent, 0 0 0 9999px rgba(0,0,0,0.78); top: 50%; left: 50%; width: 0; height: 0; animation: none; }
-#tour-pop { position: fixed; z-index: 9002; background: #fff; border-radius: 16px; max-width: 420px; min-width: 300px; box-shadow: 0 16px 48px rgba(0,0,0,0.4); font-family: Arial, sans-serif; transition: top 0.4s cubic-bezier(0.4, 0, 0.2, 1), left 0.4s cubic-bezier(0.4, 0, 0.2, 1); animation: tour-pop-in 0.3s cubic-bezier(0.4, 0, 0.2, 1); overflow: hidden; }
-#tour-pop.centered { animation: tour-pop-in-center 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+#tour-pop { position: fixed; z-index: 9002; background: rgba(255,255,255,0.97); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-radius: 16px; max-width: 440px; min-width: 320px; box-shadow: 0 20px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.6) inset; font-family: Arial, sans-serif; transition: top 0.4s cubic-bezier(0.4, 0, 0.2, 1), left 0.4s cubic-bezier(0.4, 0, 0.2, 1); animation: tour-pop-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards; overflow: hidden; }
+#tour-pop.centered { transform: translate(-50%, -50%); animation: tour-pop-in-center 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
 #tour-pop .tour-bar { height: 5px; background: rgba(0,0,0,0.06); position: relative; overflow: hidden; }
 #tour-pop .tour-bar-fill { height: 100%; background: linear-gradient(90deg, #2d6a9f, #4a8c4a); transition: width 0.4s ease; border-radius: 0 5px 5px 0; }
 #tour-pop .tour-section-badge { display: inline-block; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; padding: 3px 10px; border-radius: 12px; background: linear-gradient(135deg, #2d6a9f, #4a8c4a); color: #fff; margin-bottom: 10px; }
@@ -396,6 +396,15 @@ body.theme-dark nav#mainnav button.active { background: #444; color: #fff; }
 #tour-fab { position: fixed; bottom: 20px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: linear-gradient(135deg, #2d6a9f, #4a8c4a); color: #fff; border: none; font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.25); z-index: 100; display: flex; align-items: center; justify-content: center; transition: transform 0.15s, box-shadow 0.15s; }
 #tour-fab:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
 .confetti-piece { position: fixed; width: 10px; height: 14px; top: -20px; pointer-events: none; z-index: 9100; animation: confetti-fall 2.5s linear forwards; }
+#tour-pop .tour-nav { display: flex; gap: 4px; padding: 8px 12px 0; flex-wrap: wrap; justify-content: center; }
+#tour-pop .tour-nav-dot { width: 32px; height: 32px; border-radius: 50%; border: 2px solid #e0e7f0; background: #f5f8fc; cursor: pointer; font-size: 0.95rem; padding: 0; transition: all 0.15s; display: flex; align-items: center; justify-content: center; opacity: 0.55; }
+#tour-pop .tour-nav-dot:hover { transform: scale(1.1); opacity: 0.9; }
+#tour-pop .tour-nav-dot.active { background: linear-gradient(135deg, #2d6a9f, #4a8c4a); border-color: #1a3a5c; opacity: 1; transform: scale(1.1); box-shadow: 0 2px 8px rgba(45,106,159,0.4); }
+#tour-pop .tour-nav-dot.done { opacity: 0.85; background: #e8f5e9; border-color: #4a8c4a; }
+#tour-pop button.tp-try { background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; padding: 8px 16px; box-shadow: 0 2px 6px rgba(243,156,18,0.3); }
+#tour-pop button.tp-try:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(243,156,18,0.5); }
+#tour-pop kbd { background: #f0f4f8; border: 1px solid #ccd; border-radius: 4px; padding: 1px 5px; font-family: monospace; font-size: 0.85em; color: #1a3a5c; box-shadow: 0 1px 0 #ccc; }
+#tour-pop code { background: #f5f8fc; padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 0.86em; color: #2d6a9f; }
 @media print { #tour-spot, #tour-pop, #tour-fab, .confetti-piece { display: none !important; } }
 
 /* ===== v20: App complexity levels ===== */
@@ -480,6 +489,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
         <button class="menu-item" onclick="window.print();toggleMenu()">🖨 Print This Page</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="startTour();toggleMenu()">🎓 Take the Tour</button>
+        <button class="menu-item" onclick="openBugReport();toggleMenu()">📨 Send Feedback</button>
         <button class="menu-item" onclick="showTab('settings');toggleMenu()">⚙ Open Settings</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
@@ -4606,20 +4616,26 @@ function sendEmailReminder(name) {
   logAction('member', 'email', 'Email reminder opened for ' + name);
 }
 
-// ---------- v21 #7: Auto-backup reminder ----------
+// ---------- v21 #7: Auto-backup reminder (v23: more aggressive — 1 day) ----------
 function _checkBackupReminder() {
   _ensureSettingsSchema();
   const last = DB.settings.lastBackupAt || 0;
   const days = (Date.now() - last) / (1000 * 60 * 60 * 24);
   const banner = document.getElementById('backup-reminder');
   if (!banner) return;
-  if (last === 0 || days > 7) {
+  // v23: if member count > 0 (real data), warn after 1 day
+  const hasData = (DB.members || []).length > 0;
+  const threshold = hasData ? 1 : 7;
+  if (last === 0 || days > threshold) {
     banner.style.display = 'block';
     banner.innerHTML = (last === 0
-      ? '⚠️ <strong>You haven\'t saved a backup file yet.</strong>'
-      : '⚠️ <strong>It\'s been ' + Math.floor(days) + ' days since your last backup.</strong>')
+      ? '⚠️ <strong>You haven\'t saved a backup file yet.</strong> Browser data can be cleared at any time — backups are your only insurance.'
+      : '⚠️ <strong>It\'s been ' + Math.floor(days) + ' day' + (Math.floor(days) === 1 ? '' : 's') + ' since your last backup.</strong> Browser storage can be wiped — save now to be safe.')
       + ' <button class="btn btn-green btn-sm" style="margin-left:8px" onclick="exportBackup()">💾 Save Backup Now</button>'
-      + ' <button class="btn btn-gray btn-sm" onclick="document.getElementById(\'backup-reminder\').style.display=\'none\'">Dismiss</button>';
+      + ' <button class="btn btn-gray btn-sm" onclick="document.getElementById(\'backup-reminder\').style.display=\'none\'">Dismiss for now</button>';
+    banner.style.background = (last === 0 || days > 7) ? '#fdecea' : '#fff3cd';
+    banner.style.borderBottomColor = (last === 0 || days > 7) ? '#c0392b' : '#ffc107';
+    banner.style.color = (last === 0 || days > 7) ? '#6b2118' : '#856404';
   } else {
     banner.style.display = 'none';
   }
@@ -5231,75 +5247,163 @@ function changeEditPin() {
 }
 
 /* ============ v22: TUTORIAL / PRODUCT TOUR ============ */
-// v23: Tour sections with colored badges
+// v23: Tour sections with colored badges + section nav
 const _TOUR_SECTIONS = {
-  'getting-started': { name: 'Welcome', cls: 'cl-getting-started' },
-  'daily-workflow': { name: 'Daily Workflow', cls: 'cl-daily-workflow' },
-  'customization': { name: 'Make It Yours', cls: 'cl-customization' },
-  'power': { name: 'Power Features', cls: 'cl-power' },
-  'safety': { name: 'Safety Net', cls: 'cl-safety' },
-  'finale': { name: 'You\'re Ready', cls: 'cl-finale' }
+  'getting-started': { name: 'Welcome', cls: 'cl-getting-started', icon: '👋' },
+  'daily-workflow': { name: 'Daily Workflow', cls: 'cl-daily-workflow', icon: '📊' },
+  'customization': { name: 'Make It Yours', cls: 'cl-customization', icon: '🎨' },
+  'power': { name: 'Power Features', cls: 'cl-power', icon: '⚡' },
+  'safety': { name: 'Safety Net', cls: 'cl-safety', icon: '🛡' },
+  'finale': { name: 'You\'re Ready', cls: 'cl-finale', icon: '🎉' }
 };
 const _TOUR_STEPS = [
-  { sec: 'getting-started', target: null, title: '👋 Welcome!', body: 'This is a quick guided tour of <strong>every</strong> feature in your app — about 4 minutes total.<br><br>Use <kbd>→</kbd> / <kbd>←</kbd> arrow keys, or click the buttons. Press <kbd>Esc</kbd> to skip.<br><br>Ready? Let\'s go!' },
+  { sec: 'getting-started', target: null, title: '👋 Welcome!', body: 'A quick tour of <strong>every</strong> feature — under 3 minutes.<br><br>Use <kbd>→</kbd> / <kbd>←</kbd> arrows, or the buttons. <kbd>Esc</kbd> to skip.<br><br><em>Click a section badge above to jump.</em>' },
 
   // --- Getting started ---
-  { sec: 'getting-started', target: '#hdr-title', title: '🏷 Your app name', body: 'Up here is your branding. Customize the name, emoji, and subtitle in <strong>Settings → App branding</strong>.', preTab: 'dashboard' },
-  { sec: 'getting-started', target: '#mswitch', title: '✏ Edit Mode', body: 'Toggle <strong>ON</strong> to record payments, edit members, manage data.<br>Toggle <strong>OFF</strong> for read-only — great when sharing your screen.' },
-  { sec: 'getting-started', target: '#menu-wrap', title: '⚙ Menu', body: 'Backups, restore, exports, print, reset — and a shortcut to Settings. The 💾 icon pulses orange when you have unsaved changes.' },
+  { sec: 'getting-started', target: '#mswitch', title: '✏ Edit Mode', body: 'Toggle <strong>ON</strong> to edit. <strong>OFF</strong> for read-only — great when sharing your screen.', preTab: 'dashboard' },
 
-  // --- Daily workflow ---
-  { sec: 'daily-workflow', target: '#ds-stats', title: '📊 Dashboard at a glance', body: 'Live numbers: active members, who owes, total outstanding, total collected, paused. Updates instantly.' },
-  { sec: 'daily-workflow', target: '#ds-owe', title: '⚠ Members who owe', body: 'Click a name → opens their profile. The <strong>📱 SMS</strong> button sends a reminder.<br><br>In Pro: <strong>📧 Email</strong>, <strong>🔗 Link</strong>, <strong>🧾 QR</strong>.' },
-  { sec: 'daily-workflow', target: '#ds-recent', title: '💰 Recent payments', body: 'Last payments at a glance, so you can spot anything off right away.' },
-  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="members"]', title: '👥 Members tab', body: 'All members in one place. Avatars show their photo or auto-generated initials. Tags (Pro) are colored chips.', preTab: 'members' },
-  { sec: 'daily-workflow', target: '#mq', title: '🔍 Search & filter', body: 'Find any member by name. Filter by who owes / has credit / is even. Sort by name or balance.' },
-  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="payments"]', title: '💰 Payments tab', body: 'Every payment, ever. Filter by date range. In Pro, the Method column tracks Cash / Check / Venmo / etc.', preTab: 'payments' },
-  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="groups"]', title: '🗂 Groups tab', body: 'Day-of-week groups (Sunday / Monday / Wednesday / Thursday — fully editable). Click a group → see members + <strong>Charge Everyone</strong>.', preTab: 'groups' },
-  { sec: 'daily-workflow', target: null, title: '💳 Smart "Charge Everyone"', body: 'The app warns if:<br><br>• You\'re charging Monday group on a Tuesday<br>• You already charged this group today<br>• The amount looks unusually large<br><br>Catches expensive mistakes before they happen.' },
-  { sec: 'daily-workflow', target: null, title: '📅 Take Attendance (Pro)', body: 'When the attendance toggle is ON, you get a <strong>Take Attendance</strong> button on each group. Tick who showed up → click <strong>Charge Attendees</strong>. Discounts auto-apply.' },
-  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="notes"]', title: '📝 Notes tab', body: 'Your exercise combo library. Categorize by Aerobics / Ball / Aqua / Weights (or your own categories). Folders. Upload Word, PDF, or text docs to auto-import.', preTab: 'notes' },
+  // --- Daily workflow (the most important everyday stuff) ---
+  { sec: 'daily-workflow', target: '#ds-stats', title: '📊 Dashboard at a glance', body: 'Live counts: active members, who owes, total outstanding, total collected, paused. Updates instantly.' },
+  { sec: 'daily-workflow', target: '#ds-owe', title: '⚠ Who owes money', body: 'Click a name → profile. <strong>📱 SMS</strong> sends a reminder. In Pro: <strong>📧 Email</strong>, <strong>🔗 Link</strong>, <strong>🧾 QR</strong>.' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="members"]', title: '👥 Members', body: 'All members. Avatars (photo or initials). Tags (Pro). Search, filter, sort.', preTab: 'members', tryIt: { label: 'Open first member', fn: '_tourTry_openFirstMember' } },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="payments"]', title: '💰 Payments', body: 'Every payment ever. Filter by date. In Pro: payment-method tracking.', preTab: 'payments' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="groups"]', title: '🗂 Groups & Charge Everyone', body: 'Day-of-week groups, fully editable. Click → see members + <strong>Charge Everyone</strong>.<br><br>Smart warnings catch mistakes (wrong day? Already charged today?).', preTab: 'groups' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="notes"]', title: '📝 Notes — your combo library', body: 'Categories. Folders. Drag-drop combos between categories. Upload <strong>Word, PDF, or text</strong> docs to auto-import.', preTab: 'notes' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="reports"]', title: '📈 Reports', body: 'Insights: revenue by month, by group, by payment method, top 10 payers, top owers. Print-friendly.', preTab: 'reports' },
 
-  // --- Customization ---
-  { sec: 'customization', target: 'nav#mainnav button[data-tab="settings"]', title: '⚙ Settings — your control panel', body: 'Everything you can change about the app lives here. Only visible in Edit Mode.<br><br>Let\'s walk through each section…', preTab: 'settings' },
-  { sec: 'customization', target: '#settings-content', title: '📐 App complexity level', body: '<strong>🌱 Simple</strong> — for non-technical users (your mom).<br><strong>🌿 Standard</strong> — most users.<br><strong>🌳 Pro</strong> — every feature.<br><br>Switch any time. No data ever lost.' },
-  { sec: 'customization', target: null, title: '🎨 App branding', body: 'Change the app name, header emoji, and browser-tab subtitle. Hand it to someone — they can rebrand it instantly to "Sara\'s Yoga Group" or whatever they want.' },
-  { sec: 'customization', target: null, title: '🌐 Currency & date format (Pro)', body: 'Switch <code>$</code> to <code>₪ € £ ¥</code> — anything. Choose date format: <strong>MM/DD/YYYY</strong>, <strong>DD/MM/YYYY</strong>, or <strong>ISO</strong>.' },
-  { sec: 'customization', target: null, title: '💰 Defaults', body: 'Default per-class amount for new members. Used everywhere new charges happen.' },
-  { sec: 'customization', target: null, title: '🗂 Day-of-week groups', body: 'Add Friday. Rename Sunday to "Sun". Reorder, delete. Renames cascade safely to all members & payments.' },
-  { sec: 'customization', target: null, title: '🏷 Notes categories', body: 'Edit Aerobics / Ball / Aqua / Weights tabs — change icons, rename, reorder, delete. Deleting auto-moves combos to "Uncategorized."' },
-  { sec: 'customization', target: null, title: '📋 Custom member fields', body: 'Define extra fields applied to every member: Address, Allergies, Emergency Contact, Locker #. Four types: text, long text, number, date.' },
-  { sec: 'customization', target: null, title: '💳 Payment methods', body: 'Customize the Method dropdown. Default: Cash, Check, Venmo, Zelle, Other. Add PayPal, Apple Pay — whatever you use. Reports break down by method.' },
-  { sec: 'customization', target: null, title: '💬 SMS reminder template', body: 'Edit the text sent when you click <strong>📱</strong> next to someone owing. Placeholders: <code>{firstName}</code>, <code>{balance}</code>, <code>{currency}</code>, <code>{appName}</code>.<br><br>Bonus: <strong>Send to All Who Owe</strong> opens one SMS tab per debtor.' },
-  { sec: 'customization', target: null, title: '🎨 Theme', body: 'Light, Dark, or Custom — five color pickers (background, surface, text, accent, accent-dark). Make the app match your group\'s vibe.' },
+  // --- Customization (condensed) ---
+  { sec: 'customization', target: 'nav#mainnav button[data-tab="settings"]', title: '⚙ Settings — your control panel', body: 'Everything is customizable. Only visible in Edit Mode.', preTab: 'settings' },
+  { sec: 'customization', target: '#settings-content', title: '📐 Three complexity levels', body: '<strong>🌱 Simple</strong> for your mom · <strong>🌿 Standard</strong> for you · <strong>🌳 Pro</strong> for every feature.<br><br>Switch any time. Data never lost.', tryIt: { label: 'Try Pro mode', fn: '_tourTry_setPro' } },
+  { sec: 'customization', target: null, title: '🎨 Branding, currency, theme', body: 'Rename the app. Change <code>$</code> to <code>₪ €</code> anything. Light / Dark / Custom theme with 5 color pickers.' },
+  { sec: 'customization', target: null, title: '🗂 Custom groups & categories', body: 'Add Friday, rename Sunday, reorder. Edit Notes tabs (Aerobics / Ball / Aqua / Weights). All instantly cascade everywhere.' },
+  { sec: 'customization', target: null, title: '📋 Custom member fields', body: 'Add Address, Allergies, Emergency Contact, Locker # — applied to every member. Four types: text, long text, number, date.' },
+  { sec: 'customization', target: null, title: '💬 SMS template + bulk reminders', body: 'Edit the reminder text. <strong>Send to All Who Owe</strong> opens one SMS tab per debtor in your messaging app.' },
 
-  // --- Power features ---
-  { sec: 'power', target: null, title: '✨ Optional features', body: 'Turn each on only when you need it. Each toggle asks "Are you sure?" first.<br><br>📅 Class attendance · 👨‍👩‍👧 Family grouping · 🔁 Recurring billing · 🏷 Discounts · 📅 Holidays · 🎂 Birthday greetings · 🔗 Statement links · 🧾 QR codes · 🌙 Auto dark mode · 👤 Member portal' },
-  { sec: 'power', target: null, title: '👨‍👩‍👧 Family discount', body: 'Mark members as "Primary" or "Secondary" in their family. Set the discount once: <strong>50% off</strong>, <strong>100% off</strong> (free for secondaries), whatever. Auto-applied on every charge.' },
-  { sec: 'power', target: null, title: '🔁 Recurring billing', body: 'For monthly members: set their amount + day of month. The app auto-creates the charge each month — no double-charging, ever.' },
-  { sec: 'power', target: null, title: '🏷 Member tags', body: 'Colored labels: VIP, Pregnant, New Member, Trial. Show next to names in the Members table.' },
-  { sec: 'power', target: null, title: '📅 Holidays', body: 'Mark dates with no class (Pesach, Christmas, etc.). Reports use these to skip expected charges.' },
-  { sec: 'power', target: null, title: '🌙 Auto dark mode', body: 'Auto-switch to dark theme between configured hours. Default 7pm–7am. Easier on the eyes when you check balances at night.' },
-  { sec: 'power', target: null, title: '🔗 Shareable statement links', body: 'Generate a read-only URL with a member\'s balance. Send via text or email. Anyone with the link sees just their balance — no edits possible.' },
-  { sec: 'power', target: null, title: '🧾 QR codes', body: 'Print a QR code on receipts. Members scan → see their statement instantly.' },
-  { sec: 'power', target: 'nav#mainnav button[data-tab="reports"]', title: '📈 Reports', body: 'Insights: revenue by month with bar charts, revenue by group, payment-method breakdown, top 10 payers, currently owing. Print-friendly.', preTab: 'reports' },
+  // --- Power features (condensed) ---
+  { sec: 'power', target: null, title: '✨ Optional features', body: 'Turn on only what you need:<br><br>📅 Attendance · 👨‍👩‍👧 Family grouping · 🔁 Recurring billing · 🏷 Discounts · 📅 Holidays · 🎂 Birthday greetings · 🔗 Statement links · 🧾 QR · 🌙 Auto dark mode' },
+  { sec: 'power', target: null, title: '👨‍👩‍👧 Family discount', body: 'Mark members "Primary" / "Secondary" in their family. Set discount once (50% off, 100% off, etc.). Auto-applied on every charge.' },
+  { sec: 'power', target: null, title: '🔁 Recurring billing', body: 'For monthly members: set amount + day of month. App auto-creates each month\'s charge. Idempotent — never double-charges.' },
 
   // --- Safety ---
-  { sec: 'safety', target: null, title: '🛡 Built-in safety', body: 'Every risky action confirms:<br><br>• Toggle changes ask "Are you sure?"<br>• Duplicate payment within 5 min → warning<br>• Unusually large amount → warning<br>• Charging a group twice the same day → warning<br>• Day-of-week mismatch → warning' },
-  { sec: 'safety', target: null, title: '↶ Undo button', body: 'After every change (payment, edit, archive, charge), an <strong>Undo</strong> button appears bottom-left for 10 seconds. Click it to revert. Saves you from costly mistakes.' },
-  { sec: 'safety', target: null, title: '🔒 Read-only lock & PIN', body: 'Lock Edit Mode entirely (when sharing your screen), or require a 4-digit PIN to enter Edit Mode (kids, shared device). Both in <strong>Settings → 🔒 Safety locks</strong>.' },
-  { sec: 'safety', target: null, title: '🩺 Self-test on load', body: 'Every time the app loads, it scans your data for issues — orphan payments, weird balances, etc. — and shows a banner if anything\'s off.' },
-  { sec: 'safety', target: null, title: '📜 Activity Log (Pro)', body: 'Every action timestamped, with the device that made it. Full audit trail.<br><br>Find it in the <strong>Log</strong> tab.', preTab: 'log', skipIfMissing: true },
-  { sec: 'safety', target: 'nav#mainnav button[data-tab="settings"]', title: '💾 Backups', body: '<strong>Save to File</strong> creates a JSON backup. <strong>Load File</strong> restores. The app pulses an orange reminder if you haven\'t saved in 7+ days.<br><br>Find both in <strong>Menu</strong> or <strong>Settings → Data</strong>.', preTab: 'settings' },
-  { sec: 'safety', target: null, title: '📱 Install as a real app', body: 'Chrome/Edge: install icon ⊕ in address bar.<br>iPhone: Share → Add to Home Screen.<br>Android: menu → Install app.<br><br>Opens fullscreen with its own icon — feels native.' },
+  { sec: 'safety', target: null, title: '🛡 Built-in safety', body: '• Toggle changes confirm<br>• Duplicate payments warn<br>• Unusual amounts warn<br>• Wrong day-of-week warns<br>• Already-charged-today warns' },
+  { sec: 'safety', target: null, title: '↶ Undo · 🔒 Lock · 🔑 PIN', body: '<strong>Undo</strong>: 10-sec button after each change.<br><strong>Read-only lock</strong>: disables Edit Mode entirely.<br><strong>PIN</strong>: 4-digit gate to enter Edit Mode.<br><br>All in <strong>Settings → 🔒 Safety locks</strong>.' },
+  { sec: 'safety', target: null, title: '💾 Backups (important!)', body: 'Click <strong>💾 Save to File</strong> in the Menu often. The app warns if you haven\'t saved in 1+ day.<br><br><strong>localStorage can be cleared</strong> by browsers — backup files are your only insurance.' },
 
   // --- Finale ---
-  { sec: 'finale', target: null, title: '🎉 You\'re ready!', body: 'You just walked through every feature. Tips:<br><br>• <strong>🎓 button</strong> bottom-right — restart this tour any time<br>• <strong>Save backups weekly</strong> for safety<br>• Share the URL on phone + laptop — each device keeps its own data<br><br>Happy organizing! 💪' }
+  { sec: 'finale', target: null, title: '🎉 You\'re ready!', body: '• <strong>🎓 button</strong> bottom-right restarts this tour<br>• <strong>📨 Send Feedback</strong> in Settings reports bugs / requests features<br>• <strong>Save backups daily</strong>! 💾<br><br>Happy organizing! 💪' }
 ];
+
+// v23: Tour "Try It" handlers — small interactive demos
+function _tourTry_openFirstMember() {
+  if (!DB.members || !DB.members.length) { alert('No members to demo with.'); return; }
+  openProfile(DB.members[0].name);
+}
+function _tourTry_setPro() {
+  // Bypass confirmation for tour demo
+  _ensureSettingsSchema();
+  DB.settings.appLevel = 'pro';
+  applyAppLevel();
+  saveDB();
+  renderSettings();
+}
+
+// v23: Section jump — click an icon dot in the nav strip
+function _tourJumpToSection(secKey) {
+  const idx = _TOUR_STEPS.findIndex(s => s.sec === secKey);
+  if (idx < 0) return;
+  _tourIdx = idx;
+  _showTourStep();
+}
+
+// v23: Tour analytics — track completion + skips
+function _trackTour(action) {
+  if (!DB.settings.tourStats) DB.settings.tourStats = { starts: 0, completes: 0, skipsAt: [] };
+  if (action === 'start') DB.settings.tourStats.starts++;
+  if (action === 'complete') DB.settings.tourStats.completes++;
+  if (action === 'skip') DB.settings.tourStats.skipsAt.push({ step: _tourIdx, ts: Date.now() });
+  saveDB();
+}
+
+// v23: Bug report / Feature request via mailto:
+function openBugReport() {
+  const branding = (DB.settings && DB.settings.branding && DB.settings.branding.name) || 'Exercise Group';
+  const dev = _deviceLabel();
+  const ver = 'v23';
+  const memberCount = (DB.members || []).length;
+  const body = document.getElementById('ov-edit-body');
+  body.innerHTML =
+    '<div class="mh"><h2>📨 Send Feedback</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
+    '<p style="font-size:0.86rem;color:#555;margin-bottom:12px">Report a bug, request a feature, or just say something. Your message will open in your email app.</p>' +
+    '<div class="fgrid">' +
+      '<div class="fg" style="grid-column:1/-1"><label>What\'s this about? *</label>' +
+        '<select id="bug-type" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">' +
+          '<option value="bug">🐛 Bug — something broken</option>' +
+          '<option value="feature">💡 Feature request — what to add</option>' +
+          '<option value="question">❓ Question</option>' +
+          '<option value="praise">🙌 Compliment / general</option>' +
+        '</select>' +
+      '</div>' +
+      '<div class="fg" style="grid-column:1/-1"><label>Subject *</label>' +
+        '<input id="bug-subject" type="text" placeholder="Short title — e.g. \'Charge Everyone is broken\'">' +
+      '</div>' +
+      '<div class="fg" style="grid-column:1/-1"><label>Details *</label>' +
+        '<textarea id="bug-body" rows="6" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem;font-family:Arial;resize:vertical" placeholder="What happened? What did you expect? Steps to reproduce…"></textarea>' +
+      '</div>' +
+      '<div class="fg" style="grid-column:1/-1"><label>Your email <span class="hint">(so we can reply)</span></label>' +
+        '<input id="bug-from" type="email" placeholder="your@email.com" value="' + _escAttr(DB.settings.userEmail || '') + '">' +
+      '</div>' +
+      '<div class="fg" style="grid-column:1/-1"><label>Send to <span class="hint">(developer/owner email)</span></label>' +
+        '<input id="bug-to" type="email" placeholder="developer@email.com" value="' + _escAttr(DB.settings.feedbackEmail || '') + '">' +
+      '</div>' +
+    '</div>' +
+    '<div style="background:#f0f4f8;border-radius:8px;padding:10px;margin-top:12px;font-size:0.78rem;color:#666">' +
+      '<strong>Auto-attached info:</strong> app version (' + ver + '), device (' + _esc(dev) + '), member count (' + memberCount + '), current level (' + (DB.settings.appLevel || '?') + ')' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Cancel</button>' +
+      '<button class="btn btn-green" onclick="sendBugReport()">📤 Open Email</button>' +
+    '</div>';
+  openOv('ov-edit');
+}
+function sendBugReport() {
+  const type = document.getElementById('bug-type').value;
+  const subj = (document.getElementById('bug-subject').value || '').trim();
+  const text = (document.getElementById('bug-body').value || '').trim();
+  const from = (document.getElementById('bug-from').value || '').trim();
+  const to = (document.getElementById('bug-to').value || '').trim();
+  if (!subj || !text) { alert('Please fill in the subject and details.'); return; }
+  if (!to) { alert('Please enter a developer/owner email to send to.'); return; }
+  // Save preferences
+  DB.settings.userEmail = from;
+  DB.settings.feedbackEmail = to;
+  saveDB();
+  const branding = (DB.settings && DB.settings.branding && DB.settings.branding.name) || 'Exercise Group';
+  const tagMap = { bug: '🐛 Bug', feature: '💡 Feature Request', question: '❓ Question', praise: '🙌 Feedback' };
+  const tag = tagMap[type] || 'Feedback';
+  const subject = '[' + branding + '] ' + tag + ': ' + subj;
+  const dev = _deviceLabel();
+  const memberCount = (DB.members || []).length;
+  const body =
+    text + '\n\n' +
+    '— — — — — — — — — — — — —\n' +
+    'Auto-attached info:\n' +
+    '• App: ' + branding + ' (v23)\n' +
+    '• Level: ' + (DB.settings.appLevel || '?') + '\n' +
+    '• Device: ' + dev + '\n' +
+    '• Members: ' + memberCount + '\n' +
+    '• Sent from: ' + (from || '(no email provided)') + '\n' +
+    '• Date: ' + new Date().toString();
+  const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  window.location.href = url;
+  closeOv('ov-edit');
+  logAction('settings', 'feedback', tag + ': ' + subj);
+  setTimeout(() => alert('📬 Your email app should have opened with the message pre-filled. Just hit Send!'), 200);
+}
 let _tourIdx = 0;
 let _tourPrevState = null;
 function startTour() {
   _tourPrevState = { editMode: editMode };
+  _trackTour('start');
   // Auto-enable Edit Mode for the tour so all features are visible
   if (!editMode) {
     if (confirm('🎓 The tour will turn Edit Mode ON so you can see every feature. Turn it back OFF after if you like.')) {
@@ -5312,6 +5416,8 @@ function startTour() {
   _showTourStep();
 }
 function endTour() {
+  // Track skip if user is mid-tour and not finishing
+  if (document.getElementById('tour-pop') && _tourIdx < _TOUR_STEPS.length - 1) _trackTour('skip');
   ['tour-spot', 'tour-pop'].forEach(id => { const el = document.getElementById(id); if (el) el.remove(); });
   _detachTourKeyboard();
   // Clean up any confetti
@@ -5324,6 +5430,7 @@ function nextTour() {
 }
 function prevTour() { if (_tourIdx > 0) { _tourIdx--; _showTourStep(); } }
 function _finishTour() {
+  _trackTour('complete');
   endTour();
   _launchConfetti();
   setTimeout(() => alert('🎉 You\'re ready! Open Settings → 🎓 Take the tour any time to revisit.'), 600);
@@ -5357,7 +5464,10 @@ function _showTourStep() {
   const step = _TOUR_STEPS[_tourIdx];
   // Pre-action: switch tab if needed
   if (step.preTab) try { showTab(step.preTab); } catch (e) {}
-  setTimeout(() => _renderTourStep(step), 180);
+  // v23: wait for layout to settle (tab switch repaint) using double rAF + small delay
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    setTimeout(() => _renderTourStep(step), 120);
+  }));
 }
 function _renderTourStep(step) {
   let target = step.target ? document.querySelector(step.target) : null;
@@ -5379,55 +5489,85 @@ function _renderTourStep(step) {
   }
   document.body.appendChild(spot);
 
-  // v23: Section badge + progress bar
+  // v23: Section badge + progress bar + section nav
   const sec = step.sec ? (_TOUR_SECTIONS[step.sec] || null) : null;
   const totalSteps = _TOUR_STEPS.length;
   const progressPct = Math.round(((_tourIdx + 1) / totalSteps) * 100);
   const isLast = _tourIdx === totalSteps - 1;
 
+  // Build a horizontal "section dots" navigator
+  const sectionsList = Object.keys(_TOUR_SECTIONS);
+  const currentSecIdx = sectionsList.indexOf(step.sec);
+  const navDots = sectionsList.map((sk, idx) => {
+    const sd = _TOUR_SECTIONS[sk];
+    const isActive = idx === currentSecIdx;
+    const isPast = idx < currentSecIdx;
+    return '<button class="tour-nav-dot' + (isActive ? ' active' : '') + (isPast ? ' done' : '') + '" data-sec="' + sk + '" onclick="_tourJumpToSection(\'' + sk + '\')" title="' + sd.name + '">' + sd.icon + '</button>';
+  }).join('');
+
   const pop = document.createElement('div');
   pop.id = 'tour-pop';
   if (!target) pop.classList.add('centered');
+  const tryBtn = step.tryIt ? '<button class="tp-try" onclick="(' + step.tryIt.fn + ')()" title="See it in action">▶ ' + step.tryIt.label + '</button>' : '';
   pop.innerHTML =
     '<span class="tour-arrow"></span>' +
     '<div class="tour-bar"><div class="tour-bar-fill" style="width:' + progressPct + '%"></div></div>' +
+    '<div class="tour-nav">' + navDots + '</div>' +
     '<div class="tour-content">' +
-      (sec ? '<span class="tour-section-badge ' + sec.cls + '">' + sec.name + '</span>' : '') +
+      (sec ? '<span class="tour-section-badge ' + sec.cls + '">' + sec.icon + ' ' + sec.name + '</span>' : '') +
       '<h3>' + step.title + '</h3>' +
       '<p>' + step.body + '</p>' +
+      (tryBtn ? '<div style="margin-top:12px">' + tryBtn + '</div>' : '') +
     '</div>' +
     '<div class="tour-footer">' +
-      '<span class="tour-progress">Step ' + (_tourIdx + 1) + ' of ' + totalSteps + '</span>' +
+      '<span class="tour-progress">' + (_tourIdx + 1) + '/' + totalSteps + '</span>' +
       '<button class="tp-skip" onclick="endTour()" title="Esc">Skip</button>' +
-      (_tourIdx > 0 ? '<button class="tp-prev" onclick="prevTour()" title="←">← Back</button>' : '') +
+      (_tourIdx > 0 ? '<button class="tp-prev" onclick="prevTour()" title="←">←</button>' : '') +
       '<button class="' + (isLast ? 'tp-finish' : 'tp-next') + '" onclick="nextTour()" title="→">' + (isLast ? 'Finish 🎉' : 'Next →') + '</button>' +
     '</div>';
   document.body.appendChild(pop);
 
   // Position popover near target, or center if no target
   if (target) {
-    const r = target.getBoundingClientRect();
-    const popH = pop.offsetHeight;
-    const popW = pop.offsetWidth;
-    const vh = window.innerHeight;
-    const vw = window.innerWidth;
-    // Prefer below; if not enough room, go above
-    let top = r.bottom + 14;
-    let pos = 'bottom';
-    if (top + popH > vh - 10) {
-      top = r.top - popH - 14;
-      pos = 'top';
-    }
-    if (top < 10) top = 10;
-    let left = Math.max(10, Math.min(vw - popW - 10, r.left));
-    pop.style.top = top + 'px';
-    pop.style.left = left + 'px';
-    pop.setAttribute('data-pos', pos);
+    // v23: scroll first, then position popover after layout settles to avoid wrong rect
     target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      _positionTourPop(target);
+      // Re-position spotlight too in case scroll moved things
+      const rr = target.getBoundingClientRect();
+      const sp = document.getElementById('tour-spot');
+      if (sp) {
+        sp.style.top = (rr.top - 6) + 'px';
+        sp.style.left = (rr.left - 6) + 'px';
+        sp.style.width = (rr.width + 12) + 'px';
+        sp.style.height = (rr.height + 12) + 'px';
+      }
+    }));
   } else {
     pop.style.top = '50%';
     pop.style.left = '50%';
   }
+}
+function _positionTourPop(target) {
+  const pop = document.getElementById('tour-pop');
+  if (!pop || !target) return;
+  const r = target.getBoundingClientRect();
+  const popH = pop.offsetHeight;
+  const popW = pop.offsetWidth;
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  // Prefer below; if not enough room, go above
+  let top = r.bottom + 14;
+  let pos = 'bottom';
+  if (top + popH > vh - 10) {
+    top = r.top - popH - 14;
+    pos = 'top';
+  }
+  if (top < 10) top = 10;
+  let left = Math.max(10, Math.min(vw - popW - 10, r.left));
+  pop.style.top = top + 'px';
+  pop.style.left = left + 'px';
+  pop.setAttribute('data-pos', pos);
 }
 
 // v22: Apply family discount to an amount based on the member's role in their family
@@ -5538,11 +5678,18 @@ function renderSettings() {
       (pe ? '<button class="btn btn-gray btn-sm" onclick="changeEditPin()">Change PIN</button>' : '') +
     '</div>';
 
-  // ---------- Tutorial tour card (always visible at very top) ----------
+  // ---------- Tutorial tour + Feedback card (always visible at very top) ----------
+  const tourStats = (DB.settings.tourStats || { starts: 0, completes: 0 });
   const tourHTML = '' +
     '<div class="shead">🎓 Take the tour</div>' +
-    '<p style="font-size:0.86rem;color:#555;margin-bottom:10px">A 4-minute guided walkthrough of every feature in the app. Great for first-time users, demos, or showing it to someone.</p>' +
-    '<button class="btn btn-blue" onclick="startTour()">▶ Start the Tutorial</button>';
+    '<p style="font-size:0.86rem;color:#555;margin-bottom:10px">A guided walkthrough of every feature. ~3 minutes. Use it as a demo when showing the app to someone.</p>' +
+    '<button class="btn btn-blue" onclick="startTour()">▶ Start the Tutorial</button>' +
+    (tourStats.starts > 0 ? '<span style="margin-left:10px;font-size:0.78rem;color:#888">Started ' + tourStats.starts + ' time(s) · Completed ' + tourStats.completes + '</span>' : '');
+
+  const feedbackHTML = '' +
+    '<div class="shead">📨 Feedback / Bug Report</div>' +
+    '<p style="font-size:0.86rem;color:#555;margin-bottom:10px">Found a bug? Want a feature? Send a quick email — opens in your default email app, pre-filled with diagnostics.</p>' +
+    '<button class="btn btn-orange" onclick="openBugReport()">📨 Send Feedback</button>';
 
   // ---------- App level section (always visible at the top) ----------
   const lvl = DB.settings.appLevel || 'standard';
@@ -5828,6 +5975,7 @@ function renderSettings() {
   const card = (inner, minLevel) => '<div data-min-level="' + (minLevel || '') + '" style="background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px">' + inner + '</div>';
   document.getElementById('settings-content').innerHTML =
     card(tourHTML) +
+    card(feedbackHTML) +
     card(safetyHTML) +
     card(appLevelHTML) +
     card(brandingHTML, 'standard') +
