@@ -253,8 +253,8 @@ th.sort:hover { background: #2d6a9f; }
 .n2-search { flex: 1; min-width: 200px; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.92rem; background: #fff; }
 .n2-search:focus { outline: none; border-color: #2d6a9f; box-shadow: 0 0 0 2px rgba(45,106,159,0.15); }
 
-.n2-tabs { display: flex; gap: 2px; border-bottom: 2px solid #e0e7f0; margin-bottom: 14px; overflow-x: auto; padding-bottom: 0; }
-.n2-tab { padding: 10px 16px; cursor: pointer; font-size: 0.9rem; color: #666; white-space: nowrap; border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all 0.15s; font-family: Arial; background: transparent; border-left: none; border-right: none; border-top: none; }
+.n2-tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; border-bottom: 2px solid #e0e7f0; margin-bottom: 14px; padding-bottom: 0; }
+.n2-tab { padding: 7px 12px; cursor: pointer; font-size: 0.85rem; color: #666; white-space: nowrap; border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all 0.15s; font-family: Arial; background: transparent; border-left: none; border-right: none; border-top: none; }
 .n2-tab:hover { color: #1a3a5c; background: #f5f8fc; }
 .n2-tab.active { color: #2d6a9f; border-bottom-color: #2d6a9f; font-weight: 700; background: #f5f9ff; }
 .n2-tab .count { background: #e8eef5; color: #555; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; margin-left: 6px; font-weight: 600; }
@@ -3034,8 +3034,48 @@ function moveComboToFolder(comboId) {
   if (!editMode) return;
   const c = DB.notes.combos.find(x => x.id === comboId);
   if (!c) return;
-  // Build options: only folders in same category (or "no folder")
-  const cat = c.category || 'Aerobics';
+
+  // v23: Open a richer modal — pick destination category + folder
+  const curCat = c.category || 'Aerobics';
+  const body = document.getElementById('ov-edit-body');
+  body.innerHTML =
+    '<div class="mh"><h2>📁 Move "' + _esc(c.title) + '"</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
+    '<p style="font-size:0.86rem;color:#555;margin-bottom:10px">Pick where to move this combo. You can change category and/or folder.</p>' +
+    '<div class="fg" style="margin-bottom:14px"><label>📁 Category</label>' +
+      '<div class="cat-pills" id="mvc-cat-row">' +
+        CATEGORIES.map(cat => {
+          const sel = curCat === cat;
+          return '<span class="cat-pill' + (sel ? ' active' : '') + '" data-cat="' + _esc(cat) + '" onclick="_pickMoveCat(this)">' + CAT_ICONS[cat] + ' ' + cat + '</span>';
+        }).join('') +
+      '</div>' +
+    '</div>' +
+    '<div class="fg" style="margin-bottom:14px"><label>📂 Folder within that category</label>' +
+      '<select id="mvc-folder" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem"></select>' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Cancel</button>' +
+      '<button class="btn btn-green" onclick="_confirmMoveCombo(\'' + comboId + '\')">💾 Move</button>' +
+    '</div>';
+  body.setAttribute('data-mvc-cat', curCat);
+  body.setAttribute('data-mvc-folder', c.folderId || '');
+  _refreshMoveFolderOptions();
+  openOv('ov-edit');
+}
+function _pickMoveCat(el) {
+  const cat = el.getAttribute('data-cat');
+  document.querySelectorAll('#mvc-cat-row .cat-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  const body = document.getElementById('ov-edit-body');
+  body.setAttribute('data-mvc-cat', cat);
+  body.setAttribute('data-mvc-folder', ''); // category change resets folder pick
+  _refreshMoveFolderOptions();
+}
+function _refreshMoveFolderOptions() {
+  const body = document.getElementById('ov-edit-body');
+  const cat = body.getAttribute('data-mvc-cat') || 'Aerobics';
+  const curFolderId = body.getAttribute('data-mvc-folder') || '';
+  const sel = document.getElementById('mvc-folder');
+  if (!sel) return;
   const opts = [{ id: '', name: '(top level — no folder)' }];
   function addTree(parentId, depth) {
     (DB.notes.folders || []).filter(f => (f.parentId || null) === (parentId || null) && f.category === cat).forEach(f => {
@@ -3044,24 +3084,25 @@ function moveComboToFolder(comboId) {
     });
   }
   addTree(null, 0);
-
-  if (opts.length === 1) {
-    alert('No folders exist yet in ' + cat + '. Create one first with the 📁 + Folder button.');
-    return;
-  }
-
-  let msg = 'Move "' + c.title + '" to which folder?\n\n';
-  opts.forEach((o, i) => { msg += i + ': ' + o.name + '\n'; });
-  msg += '\nEnter the number:';
-  const ans = prompt(msg);
-  if (ans === null) return;
-  const idx = parseInt(ans, 10);
-  if (isNaN(idx) || idx < 0 || idx >= opts.length) { alert('Invalid choice'); return; }
-  const destName = opts[idx].name;
-  c.folderId = opts[idx].id || null;
-  logAction('notes', 'move', 'Moved combo "' + c.title + '" to ' + destName);
+  sel.innerHTML = opts.map(o => '<option value="' + _esc(o.id) + '"' + (o.id === curFolderId ? ' selected' : '') + '>' + _esc(o.name) + '</option>').join('');
+}
+function _confirmMoveCombo(comboId) {
+  const c = DB.notes.combos.find(x => x.id === comboId);
+  if (!c) return;
+  const body = document.getElementById('ov-edit-body');
+  const newCat = body.getAttribute('data-mvc-cat') || 'Aerobics';
+  const newFolderId = document.getElementById('mvc-folder').value || null;
+  const oldCat = c.category || 'Aerobics';
+  c.category = newCat;
+  c.folderId = newFolderId;
+  const folderName = newFolderId
+    ? ((DB.notes.folders || []).find(f => f.id === newFolderId) || {}).name || '?'
+    : '(top level)';
+  logAction('notes', 'move', 'Moved combo "' + c.title + '" → ' + newCat + ' / ' + folderName + (oldCat !== newCat ? ' (was in ' + oldCat + ')' : ''));
   saveDB();
+  closeOv('ov-edit');
   renderCombosList();
+  alert('✅ Moved "' + c.title + '" to ' + newCat + ' / ' + folderName);
 }
 
 // v18: Move (reorder) a combo within its current view (up or down)
@@ -3227,7 +3268,7 @@ function renderCombosList() {
       '</div>' +
       (editMode
         ? '<div class="fld-acts" style="position:absolute;top:10px;right:10px" onclick="event.stopPropagation()">' +
-            '<button class="btn btn-sm" style="background:#7c3aed" onclick="moveComboToFolder(\'' + c.id + '\')" title="Move to folder">📁</button>' +
+            '<button class="btn btn-sm" style="background:#7c3aed" onclick="moveComboToFolder(\'' + c.id + '\')" title="Move to category or folder">📁 Move</button>' +
             '<button class="btn btn-sm" style="background:#888" onclick="moveComboUp(\'' + c.id + '\')" title="Move up">▲</button>' +
             '<button class="btn btn-sm" style="background:#888" onclick="moveComboDown(\'' + c.id + '\')" title="Move down">▼</button>' +
           '</div>'
@@ -3341,11 +3382,11 @@ function renderComboDetail() {
   titleEl.readOnly = !editMode;
 
   const total = _countItems(combo);
-  // v13: Render category selector
+  // v13: Render category selector (v23: clearer UI in edit mode)
   const catRow = document.getElementById('combo-cat-row');
   if (catRow) {
     if (editMode) {
-      catRow.innerHTML = '<span style="font-size:0.75rem;color:#888;align-self:center;margin-right:4px">Category:</span>' +
+      catRow.innerHTML = '<span style="font-size:0.78rem;color:#555;align-self:center;margin-right:6px;font-weight:700">📁 Category <span style="color:#888;font-weight:400">— click to move:</span></span>' +
         CATEGORIES.map(cat => {
           const sel = (combo.category || 'Aerobics') === cat;
           return '<span class="cat-pill' + (sel ? ' active' : '') + '" onclick="setComboCategory(\'' + cat + '\')">' + CAT_ICONS[cat] + ' ' + cat + '</span>';
