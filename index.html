@@ -346,28 +346,57 @@ body.theme-dark nav#mainnav button.active { background: #444; color: #fff; }
 .processing-box { background: #f5f9ff; padding: 20px; text-align: center; border-radius: 10px; color: #2d6a9f; font-size: 0.9rem; }
 .error-box { background: #fdecea; border-left: 4px solid #c0392b; padding: 12px; border-radius: 6px; color: #6b2118; font-size: 0.85rem; margin: 10px 0; }
 
-/* ===== v22: Tutorial / product tour ===== */
-#tour-spot { position: fixed; border-radius: 10px; pointer-events: none; box-shadow: 0 0 0 4px #2d6a9f, 0 0 0 9999px rgba(0,0,0,0.7); transition: all 0.35s ease; z-index: 9000; }
-#tour-spot.centered { box-shadow: 0 0 0 0 transparent, 0 0 0 9999px rgba(0,0,0,0.75); top: 50%; left: 50%; width: 0; height: 0; }
-#tour-pop { position: fixed; z-index: 9002; background: #fff; border-radius: 14px; padding: 22px 24px; max-width: 380px; min-width: 280px; box-shadow: 0 12px 40px rgba(0,0,0,0.35); font-family: Arial, sans-serif; transition: all 0.25s ease; }
-#tour-pop h3 { color: #1a3a5c; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
-#tour-pop p { color: #444; font-size: 0.92rem; line-height: 1.5; margin-bottom: 14px; }
-#tour-pop .tour-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-#tour-pop .tour-progress { font-size: 0.78rem; color: #888; flex: 1; }
-#tour-pop button { padding: 7px 14px; border: none; border-radius: 6px; font-family: Arial; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
-#tour-pop button.tp-skip { background: transparent; color: #888; padding: 7px 8px; }
-#tour-pop button.tp-skip:hover { color: #c0392b; }
+/* ===== v22/v23: Tutorial / product tour — polished, animated ===== */
+@keyframes tour-spot-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(45,106,159,1), 0 0 0 9999px rgba(0,0,0,0.72); }
+  50% { box-shadow: 0 0 0 8px rgba(45,106,159,0.85), 0 0 0 9999px rgba(0,0,0,0.72); }
+}
+@keyframes tour-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes tour-pop-in-center {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.94); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes confetti-fall {
+  0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+#tour-spot { position: fixed; border-radius: 10px; pointer-events: none; box-shadow: 0 0 0 4px #2d6a9f, 0 0 0 9999px rgba(0,0,0,0.72); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); z-index: 9000; animation: tour-spot-pulse 2s ease-in-out infinite; }
+#tour-spot.centered { box-shadow: 0 0 0 0 transparent, 0 0 0 9999px rgba(0,0,0,0.78); top: 50%; left: 50%; width: 0; height: 0; animation: none; }
+#tour-pop { position: fixed; z-index: 9002; background: #fff; border-radius: 16px; max-width: 420px; min-width: 300px; box-shadow: 0 16px 48px rgba(0,0,0,0.4); font-family: Arial, sans-serif; transition: top 0.4s cubic-bezier(0.4, 0, 0.2, 1), left 0.4s cubic-bezier(0.4, 0, 0.2, 1); animation: tour-pop-in 0.3s cubic-bezier(0.4, 0, 0.2, 1); overflow: hidden; }
+#tour-pop.centered { animation: tour-pop-in-center 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+#tour-pop .tour-bar { height: 5px; background: rgba(0,0,0,0.06); position: relative; overflow: hidden; }
+#tour-pop .tour-bar-fill { height: 100%; background: linear-gradient(90deg, #2d6a9f, #4a8c4a); transition: width 0.4s ease; border-radius: 0 5px 5px 0; }
+#tour-pop .tour-section-badge { display: inline-block; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; padding: 3px 10px; border-radius: 12px; background: linear-gradient(135deg, #2d6a9f, #4a8c4a); color: #fff; margin-bottom: 10px; }
+#tour-pop .tour-section-badge.cl-getting-started { background: linear-gradient(135deg, #27ae60, #2ecc71); }
+#tour-pop .tour-section-badge.cl-daily-workflow { background: linear-gradient(135deg, #2d6a9f, #3498db); }
+#tour-pop .tour-section-badge.cl-customization { background: linear-gradient(135deg, #e67e22, #f39c12); }
+#tour-pop .tour-section-badge.cl-power { background: linear-gradient(135deg, #7c3aed, #9b59b6); }
+#tour-pop .tour-section-badge.cl-safety { background: linear-gradient(135deg, #c0392b, #e74c3c); }
+#tour-pop .tour-section-badge.cl-finale { background: linear-gradient(135deg, #f39c12, #e67e22); }
+#tour-pop .tour-content { padding: 18px 22px 16px; }
+#tour-pop h3 { color: #1a3a5c; font-size: 1.12rem; font-weight: 700; margin-bottom: 10px; line-height: 1.3; }
+#tour-pop p { color: #444; font-size: 0.93rem; line-height: 1.55; margin-bottom: 0; }
+#tour-pop .tour-footer { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 12px 22px 16px; background: #f8fbff; border-top: 1px solid #eef; }
+#tour-pop .tour-progress { font-size: 0.76rem; color: #888; flex: 1; font-weight: 600; }
+#tour-pop button { padding: 8px 16px; border: none; border-radius: 8px; font-family: Arial; font-size: 0.86rem; font-weight: 700; cursor: pointer; transition: all 0.15s; }
+#tour-pop button.tp-skip { background: transparent; color: #999; padding: 8px 10px; font-weight: 500; }
+#tour-pop button.tp-skip:hover { color: #c0392b; background: rgba(192,57,43,0.08); }
 #tour-pop button.tp-prev { background: #ecf0f4; color: #555; }
-#tour-pop button.tp-prev:hover { background: #dde4ec; }
-#tour-pop button.tp-next { background: #2d6a9f; color: #fff; }
-#tour-pop button.tp-next:hover { background: #1a3a5c; }
-#tour-pop button.tp-next:disabled { background: #ccc; cursor: not-allowed; }
+#tour-pop button.tp-prev:hover { background: #dde4ec; transform: translateX(-1px); }
+#tour-pop button.tp-next { background: linear-gradient(135deg, #2d6a9f, #1a3a5c); color: #fff; box-shadow: 0 2px 6px rgba(45,106,159,0.3); }
+#tour-pop button.tp-next:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(45,106,159,0.4); }
+#tour-pop button.tp-finish { background: linear-gradient(135deg, #27ae60, #2ecc71); }
+#tour-pop button.tp-finish:hover { box-shadow: 0 4px 10px rgba(39,174,96,0.4); }
 #tour-pop .tour-arrow { position: absolute; width: 0; height: 0; }
-#tour-pop[data-pos="bottom"] .tour-arrow { top: -8px; left: 24px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 8px solid #fff; }
-#tour-pop[data-pos="top"] .tour-arrow { bottom: -8px; left: 24px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 8px solid #fff; }
-#tour-fab { position: fixed; bottom: 20px; right: 20px; width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #2d6a9f, #4a8c4a); color: #fff; border: none; font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.25); z-index: 100; display: flex; align-items: center; justify-content: center; transition: transform 0.15s; }
-#tour-fab:hover { transform: scale(1.08); }
-@media print { #tour-spot, #tour-pop, #tour-fab { display: none !important; } }
+#tour-pop[data-pos="bottom"] .tour-arrow { top: -9px; left: 28px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 9px solid #fff; }
+#tour-pop[data-pos="top"] .tour-arrow { bottom: -9px; left: 28px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-top: 9px solid #f8fbff; }
+#tour-fab { position: fixed; bottom: 20px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: linear-gradient(135deg, #2d6a9f, #4a8c4a); color: #fff; border: none; font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.25); z-index: 100; display: flex; align-items: center; justify-content: center; transition: transform 0.15s, box-shadow 0.15s; }
+#tour-fab:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
+.confetti-piece { position: fixed; width: 10px; height: 14px; top: -20px; pointer-events: none; z-index: 9100; animation: confetti-fall 2.5s linear forwards; }
+@media print { #tour-spot, #tour-pop, #tour-fab, .confetti-piece { display: none !important; } }
 
 /* ===== v20: App complexity levels ===== */
 body.level-simple [data-min-level="standard"],
@@ -718,8 +747,8 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
       <div class="upload-zone" id="upload-zone" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleFileDrop(event)" onclick="document.getElementById('file-picker').click()">
         <div class="ic">📄</div>
         <p>Click here to pick files</p>
-        <small>or drag &amp; drop files / folders</small>
-        <input id="file-picker" type="file" accept=".docx,.txt" multiple style="display:none" onchange="handleFileSelect(event)">
+        <small>or drag &amp; drop · supports .docx, .pdf, .txt, .rtf</small>
+        <input id="file-picker" type="file" accept=".docx,.txt,.pdf,.rtf" multiple style="display:none" onchange="handleFileSelect(event)">
         <input id="folder-picker" type="file" webkitdirectory directory multiple style="display:none" onchange="handleFileSelect(event)">
       </div>
       <div style="text-align:center;margin:6px 0">
@@ -3721,6 +3750,22 @@ function _readFileAsText(file) {
       reader.onload = (e) => resolve(e.target.result);
       reader.onerror = () => reject(new Error('Could not read .txt file (browser FileReader error)'));
       reader.readAsText(file);
+    } else if (name.endsWith('.rtf')) {
+      // v23: minimal RTF support — strip control codes for plaintext
+      reader.onload = (e) => {
+        const raw = e.target.result || '';
+        // Strip RTF control words (\foo123) and groups
+        let txt = raw.replace(/\\\*\\[a-z]+\s?[^;]*;/gi, '')
+          .replace(/\\[a-z]+-?\d*\s?/gi, '')
+          .replace(/[{}]/g, '')
+          .replace(/\\'[0-9a-f]{2}/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (!txt) reject(new Error('RTF file is empty or has no readable text'));
+        else resolve(txt);
+      };
+      reader.onerror = () => reject(new Error('Could not read .rtf file (browser FileReader error)'));
+      reader.readAsText(file);
     } else if (name.endsWith('.docx')) {
       if (typeof mammoth === 'undefined') {
         reject(new Error('Document reader not loaded. Refresh the page and try again.'));
@@ -3737,8 +3782,43 @@ function _readFileAsText(file) {
       };
       reader.onerror = () => reject(new Error('Could not read .docx file (browser FileReader error)'));
       reader.readAsArrayBuffer(file);
+    } else if (name.endsWith('.pdf')) {
+      // v23: PDF support via pdf.js
+      if (typeof pdfjsLib === 'undefined') {
+        reject(new Error('PDF reader not loaded. Refresh the page and try again.'));
+        return;
+      }
+      reader.onload = async (e) => {
+        try {
+          const pdf = await pdfjsLib.getDocument({ data: e.target.result }).promise;
+          const lines = [];
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            // Group text items by Y coordinate to preserve line breaks
+            const byY = {};
+            content.items.forEach(item => {
+              if (!item.str) return;
+              const y = Math.round(item.transform[5]); // baseline Y
+              if (!byY[y]) byY[y] = [];
+              byY[y].push(item.str);
+            });
+            // Sort Y descending (top of page first), join each row
+            const ys = Object.keys(byY).map(n => parseInt(n)).sort((a, b) => b - a);
+            ys.forEach(y => lines.push(byY[y].join(' ').trim()));
+            if (i < pdf.numPages) lines.push(''); // blank line between pages
+          }
+          const txt = lines.filter(l => l.length > 0 || l === '').join('\n').trim();
+          if (!txt) reject(new Error('PDF has no extractable text (it may be scanned/image-only).'));
+          else resolve(txt);
+        } catch (err) {
+          reject(new Error('Could not parse PDF: ' + (err.message || 'unknown')));
+        }
+      };
+      reader.onerror = () => reject(new Error('Could not read PDF file (browser FileReader error)'));
+      reader.readAsArrayBuffer(file);
     } else {
-      reject(new Error('Unsupported file type'));
+      reject(new Error('Unsupported file type. Supported: .docx, .pdf, .txt, .rtf'));
     }
   });
 }
@@ -5151,96 +5231,129 @@ function changeEditPin() {
 }
 
 /* ============ v22: TUTORIAL / PRODUCT TOUR ============ */
+// v23: Tour sections with colored badges
+const _TOUR_SECTIONS = {
+  'getting-started': { name: 'Welcome', cls: 'cl-getting-started' },
+  'daily-workflow': { name: 'Daily Workflow', cls: 'cl-daily-workflow' },
+  'customization': { name: 'Make It Yours', cls: 'cl-customization' },
+  'power': { name: 'Power Features', cls: 'cl-power' },
+  'safety': { name: 'Safety Net', cls: 'cl-safety' },
+  'finale': { name: 'You\'re Ready', cls: 'cl-finale' }
+};
 const _TOUR_STEPS = [
-  { target: null, title: '👋 Welcome to your Exercise Group app', body: 'This tour walks through every feature in about 4 minutes. You can skip anytime, or come back later from Settings → 🎓 Take the Tour.<br><br>Let\'s start!' },
+  { sec: 'getting-started', target: null, title: '👋 Welcome!', body: 'This is a quick guided tour of <strong>every</strong> feature in your app — about 4 minutes total.<br><br>Use <kbd>→</kbd> / <kbd>←</kbd> arrow keys, or click the buttons. Press <kbd>Esc</kbd> to skip.<br><br>Ready? Let\'s go!' },
 
-  // --- Header / Edit Mode ---
-  { target: '#hdr-title', title: '🏷 Your app name & emoji', body: 'Up here is your branding. You can change the name, emoji, and subtitle in Settings → App branding.', preTab: 'dashboard' },
-  { target: '#mswitch', title: '✏ Edit Mode toggle', body: 'When ON, you can record payments, edit members, and manage data. When OFF, the app is read-only — perfect for showing your screen to someone without risking accidental changes.' },
-  { target: '#menu-wrap', title: '⚙ Menu', body: 'Backups, restore, exports, print, reset — and a shortcut to Settings. The 💾 button pulses orange when you have unsaved changes.' },
+  // --- Getting started ---
+  { sec: 'getting-started', target: '#hdr-title', title: '🏷 Your app name', body: 'Up here is your branding. Customize the name, emoji, and subtitle in <strong>Settings → App branding</strong>.', preTab: 'dashboard' },
+  { sec: 'getting-started', target: '#mswitch', title: '✏ Edit Mode', body: 'Toggle <strong>ON</strong> to record payments, edit members, manage data.<br>Toggle <strong>OFF</strong> for read-only — great when sharing your screen.' },
+  { sec: 'getting-started', target: '#menu-wrap', title: '⚙ Menu', body: 'Backups, restore, exports, print, reset — and a shortcut to Settings. The 💾 icon pulses orange when you have unsaved changes.' },
 
-  // --- Dashboard ---
-  { target: '#ds-stats', title: '📊 Dashboard at a glance', body: 'Live numbers: how many members are active, how many owe money, total outstanding, total collected, paused. Updates instantly with every change.' },
-  { target: '#ds-owe', title: '⚠ Members who owe money', body: 'Top of the dashboard. Click a name → opens their profile. The 📱 button (Standard+) sends an SMS reminder. In Pro: 📧 Email, 🔗 Statement Link, 🧾 QR code.' },
-  { target: '#ds-recent', title: '💰 Recent payments', body: 'Last payments at a glance, so you can spot anything off.' },
+  // --- Daily workflow ---
+  { sec: 'daily-workflow', target: '#ds-stats', title: '📊 Dashboard at a glance', body: 'Live numbers: active members, who owes, total outstanding, total collected, paused. Updates instantly.' },
+  { sec: 'daily-workflow', target: '#ds-owe', title: '⚠ Members who owe', body: 'Click a name → opens their profile. The <strong>📱 SMS</strong> button sends a reminder.<br><br>In Pro: <strong>📧 Email</strong>, <strong>🔗 Link</strong>, <strong>🧾 QR</strong>.' },
+  { sec: 'daily-workflow', target: '#ds-recent', title: '💰 Recent payments', body: 'Last payments at a glance, so you can spot anything off right away.' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="members"]', title: '👥 Members tab', body: 'All members in one place. Avatars show their photo or auto-generated initials. Tags (Pro) are colored chips.', preTab: 'members' },
+  { sec: 'daily-workflow', target: '#mq', title: '🔍 Search & filter', body: 'Find any member by name. Filter by who owes / has credit / is even. Sort by name or balance.' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="payments"]', title: '💰 Payments tab', body: 'Every payment, ever. Filter by date range. In Pro, the Method column tracks Cash / Check / Venmo / etc.', preTab: 'payments' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="groups"]', title: '🗂 Groups tab', body: 'Day-of-week groups (Sunday / Monday / Wednesday / Thursday — fully editable). Click a group → see members + <strong>Charge Everyone</strong>.', preTab: 'groups' },
+  { sec: 'daily-workflow', target: null, title: '💳 Smart "Charge Everyone"', body: 'The app warns if:<br><br>• You\'re charging Monday group on a Tuesday<br>• You already charged this group today<br>• The amount looks unusually large<br><br>Catches expensive mistakes before they happen.' },
+  { sec: 'daily-workflow', target: null, title: '📅 Take Attendance (Pro)', body: 'When the attendance toggle is ON, you get a <strong>Take Attendance</strong> button on each group. Tick who showed up → click <strong>Charge Attendees</strong>. Discounts auto-apply.' },
+  { sec: 'daily-workflow', target: 'nav#mainnav button[data-tab="notes"]', title: '📝 Notes tab', body: 'Your exercise combo library. Categorize by Aerobics / Ball / Aqua / Weights (or your own categories). Folders. Upload Word, PDF, or text docs to auto-import.', preTab: 'notes' },
 
-  // --- Members ---
-  { target: 'nav#mainnav button[data-tab="members"]', title: '👥 Members tab', body: 'All members. Avatars show their photo or auto-generated initials. Tags (in Pro) are colored chips next to names.', preTab: 'members' },
-  { target: '#mq', title: '🔍 Search & filter', body: 'Find any member by name. Filter by who owes / has credit / is even. Sort by name or balance.' },
+  // --- Customization ---
+  { sec: 'customization', target: 'nav#mainnav button[data-tab="settings"]', title: '⚙ Settings — your control panel', body: 'Everything you can change about the app lives here. Only visible in Edit Mode.<br><br>Let\'s walk through each section…', preTab: 'settings' },
+  { sec: 'customization', target: '#settings-content', title: '📐 App complexity level', body: '<strong>🌱 Simple</strong> — for non-technical users (your mom).<br><strong>🌿 Standard</strong> — most users.<br><strong>🌳 Pro</strong> — every feature.<br><br>Switch any time. No data ever lost.' },
+  { sec: 'customization', target: null, title: '🎨 App branding', body: 'Change the app name, header emoji, and browser-tab subtitle. Hand it to someone — they can rebrand it instantly to "Sara\'s Yoga Group" or whatever they want.' },
+  { sec: 'customization', target: null, title: '🌐 Currency & date format (Pro)', body: 'Switch <code>$</code> to <code>₪ € £ ¥</code> — anything. Choose date format: <strong>MM/DD/YYYY</strong>, <strong>DD/MM/YYYY</strong>, or <strong>ISO</strong>.' },
+  { sec: 'customization', target: null, title: '💰 Defaults', body: 'Default per-class amount for new members. Used everywhere new charges happen.' },
+  { sec: 'customization', target: null, title: '🗂 Day-of-week groups', body: 'Add Friday. Rename Sunday to "Sun". Reorder, delete. Renames cascade safely to all members & payments.' },
+  { sec: 'customization', target: null, title: '🏷 Notes categories', body: 'Edit Aerobics / Ball / Aqua / Weights tabs — change icons, rename, reorder, delete. Deleting auto-moves combos to "Uncategorized."' },
+  { sec: 'customization', target: null, title: '📋 Custom member fields', body: 'Define extra fields applied to every member: Address, Allergies, Emergency Contact, Locker #. Four types: text, long text, number, date.' },
+  { sec: 'customization', target: null, title: '💳 Payment methods', body: 'Customize the Method dropdown. Default: Cash, Check, Venmo, Zelle, Other. Add PayPal, Apple Pay — whatever you use. Reports break down by method.' },
+  { sec: 'customization', target: null, title: '💬 SMS reminder template', body: 'Edit the text sent when you click <strong>📱</strong> next to someone owing. Placeholders: <code>{firstName}</code>, <code>{balance}</code>, <code>{currency}</code>, <code>{appName}</code>.<br><br>Bonus: <strong>Send to All Who Owe</strong> opens one SMS tab per debtor.' },
+  { sec: 'customization', target: null, title: '🎨 Theme', body: 'Light, Dark, or Custom — five color pickers (background, surface, text, accent, accent-dark). Make the app match your group\'s vibe.' },
 
-  // --- Payments ---
-  { target: 'nav#mainnav button[data-tab="payments"]', title: '💰 Payments tab', body: 'Every payment, ever. Filter by date range. In Pro, the Method column shows Cash/Check/Venmo/etc.', preTab: 'payments' },
+  // --- Power features ---
+  { sec: 'power', target: null, title: '✨ Optional features', body: 'Turn each on only when you need it. Each toggle asks "Are you sure?" first.<br><br>📅 Class attendance · 👨‍👩‍👧 Family grouping · 🔁 Recurring billing · 🏷 Discounts · 📅 Holidays · 🎂 Birthday greetings · 🔗 Statement links · 🧾 QR codes · 🌙 Auto dark mode · 👤 Member portal' },
+  { sec: 'power', target: null, title: '👨‍👩‍👧 Family discount', body: 'Mark members as "Primary" or "Secondary" in their family. Set the discount once: <strong>50% off</strong>, <strong>100% off</strong> (free for secondaries), whatever. Auto-applied on every charge.' },
+  { sec: 'power', target: null, title: '🔁 Recurring billing', body: 'For monthly members: set their amount + day of month. The app auto-creates the charge each month — no double-charging, ever.' },
+  { sec: 'power', target: null, title: '🏷 Member tags', body: 'Colored labels: VIP, Pregnant, New Member, Trial. Show next to names in the Members table.' },
+  { sec: 'power', target: null, title: '📅 Holidays', body: 'Mark dates with no class (Pesach, Christmas, etc.). Reports use these to skip expected charges.' },
+  { sec: 'power', target: null, title: '🌙 Auto dark mode', body: 'Auto-switch to dark theme between configured hours. Default 7pm–7am. Easier on the eyes when you check balances at night.' },
+  { sec: 'power', target: null, title: '🔗 Shareable statement links', body: 'Generate a read-only URL with a member\'s balance. Send via text or email. Anyone with the link sees just their balance — no edits possible.' },
+  { sec: 'power', target: null, title: '🧾 QR codes', body: 'Print a QR code on receipts. Members scan → see their statement instantly.' },
+  { sec: 'power', target: 'nav#mainnav button[data-tab="reports"]', title: '📈 Reports', body: 'Insights: revenue by month with bar charts, revenue by group, payment-method breakdown, top 10 payers, currently owing. Print-friendly.', preTab: 'reports' },
 
-  // --- Groups ---
-  { target: 'nav#mainnav button[data-tab="groups"]', title: '🗂 Groups tab', body: 'Day-of-week groups (Sunday/Monday/Wednesday/Thursday — fully editable). Click a group to see active members + Charge Everyone.', preTab: 'groups' },
-  { target: null, title: '💳 Smart "Charge Everyone"', body: 'When you charge a group, the app warns if:<br><br>• You\'re charging "Monday" group on a Tuesday<br>• You already charged this group today<br>• The amount looks unusually large<br><br>Helps prevent costly mistakes.' },
-  { target: null, title: '📅 Take Attendance (Pro)', body: 'When the attendance toggle is ON, you get a "Take Attendance" button on each group. Tick who showed up, click "Charge Attendees" — only the ticked members get charged. Discounts auto-apply.' },
+  // --- Safety ---
+  { sec: 'safety', target: null, title: '🛡 Built-in safety', body: 'Every risky action confirms:<br><br>• Toggle changes ask "Are you sure?"<br>• Duplicate payment within 5 min → warning<br>• Unusually large amount → warning<br>• Charging a group twice the same day → warning<br>• Day-of-week mismatch → warning' },
+  { sec: 'safety', target: null, title: '↶ Undo button', body: 'After every change (payment, edit, archive, charge), an <strong>Undo</strong> button appears bottom-left for 10 seconds. Click it to revert. Saves you from costly mistakes.' },
+  { sec: 'safety', target: null, title: '🔒 Read-only lock & PIN', body: 'Lock Edit Mode entirely (when sharing your screen), or require a 4-digit PIN to enter Edit Mode (kids, shared device). Both in <strong>Settings → 🔒 Safety locks</strong>.' },
+  { sec: 'safety', target: null, title: '🩺 Self-test on load', body: 'Every time the app loads, it scans your data for issues — orphan payments, weird balances, etc. — and shows a banner if anything\'s off.' },
+  { sec: 'safety', target: null, title: '📜 Activity Log (Pro)', body: 'Every action timestamped, with the device that made it. Full audit trail.<br><br>Find it in the <strong>Log</strong> tab.', preTab: 'log', skipIfMissing: true },
+  { sec: 'safety', target: 'nav#mainnav button[data-tab="settings"]', title: '💾 Backups', body: '<strong>Save to File</strong> creates a JSON backup. <strong>Load File</strong> restores. The app pulses an orange reminder if you haven\'t saved in 7+ days.<br><br>Find both in <strong>Menu</strong> or <strong>Settings → Data</strong>.', preTab: 'settings' },
+  { sec: 'safety', target: null, title: '📱 Install as a real app', body: 'Chrome/Edge: install icon ⊕ in address bar.<br>iPhone: Share → Add to Home Screen.<br>Android: menu → Install app.<br><br>Opens fullscreen with its own icon — feels native.' },
 
-  // --- Notes ---
-  { target: 'nav#mainnav button[data-tab="notes"]', title: '📝 Notes tab', body: 'Exercise combo library. Categorize by Aerobics / Ball / Aqua / Weights (or your own categories). Organize into folders. Upload Word docs to auto-import combos.', preTab: 'notes' },
-
-  // --- Reports ---
-  { target: 'nav#mainnav button[data-tab="reports"]', title: '📈 Reports tab (Standard+)', body: 'Insights: revenue by month with bar charts, revenue by group, payment-method breakdown, top 10 payers, currently owing. Print-friendly.', preTab: 'reports' },
-
-  // --- Log ---
-  { target: 'nav#mainnav button[data-tab="log"]', title: '📜 Activity Log (Pro)', body: 'Every action is timestamped: who paid, who was archived, who was edited. Filterable by category. A full audit trail.', preTab: 'log', skipIfMissing: true },
-
-  // --- Lookup ---
-  { target: 'nav#mainnav button[data-tab="lookup"]', title: '🔍 Lookup', body: 'Type any member name to instantly jump to their profile from anywhere. Even faster than the Members tab when you know who you want.', preTab: 'lookup' },
-
-  // --- Settings landing ---
-  { target: 'nav#mainnav button[data-tab="settings"]', title: '⚙ Settings — the heart of customization', body: 'Everything you can change about the app lives here. Only visible in Edit Mode. Let\'s walk through each section…', preTab: 'settings' },
-
-  // Settings sub-cards
-  { target: '#settings-content', title: '📐 App complexity level', body: 'Three modes:<br><br>🌱 <strong>Simple</strong> — for someone non-technical (your mom). Hides advanced features.<br>🌿 <strong>Standard</strong> — most users.<br>🌳 <strong>Pro</strong> — every feature.<br><br>Switch any time. No data is ever lost.' },
-  { target: null, title: '🎨 App branding', body: 'Change the app name, header emoji, and tab subtitle. Useful when handing it to someone — they can rebrand to "Sara\'s Yoga Group" instantly.' },
-  { target: null, title: '🌐 Currency & date format (Pro)', body: 'Switch the dollar sign to ₪, €, £, ¥, or anything. Choose between US (MM/DD/YYYY), International (DD/MM/YYYY), and ISO date formats.' },
-  { target: null, title: '💰 Defaults', body: 'Default per-class amount for new members. Used everywhere new charges happen.' },
-  { target: null, title: '✨ Optional features (the toggles)', body: 'Turn each one ON only when you need it. Each toggle asks "Are you sure?" before flipping:<br><br>📅 Class attendance · 👨‍👩‍👧 Family grouping · 🔁 Recurring billing · 🏷 Discounts · 📅 Holidays · 🎂 Birthday greetings · 🔗 Statement links · 🧾 QR codes · 🌙 Auto dark mode · 👤 Member portal' },
-  { target: null, title: '🗂 Day-of-week groups', body: 'Add Friday, rename Sunday to "Sun", reorder, delete. Renames cascade safely to all members & payments.' },
-  { target: null, title: '🏷 Notes categories', body: 'Edit the Aerobics/Ball/Aqua/Weights tabs — change icons, rename, reorder, delete. Deleting moves combos to "Uncategorized."' },
-  { target: null, title: '📋 Custom member fields', body: 'Define extra fields applied to every member. Examples: Address, Allergies, Emergency Contact, Locker #. Four types: text, long text, number, date.' },
-  { target: null, title: '🏷 Member tags (Pro)', body: 'Colored labels you can attach to any member. Examples: VIP, Pregnant, New Member, Trial. Show up next to names in the Members table.' },
-  { target: null, title: '💳 Payment methods', body: 'Customize the Method dropdown. Default: Cash, Check, Venmo, Zelle, Other. Add PayPal, Apple Pay — whatever you use. Reports break down revenue by method.' },
-  { target: null, title: '💬 SMS reminder template', body: 'Edit the text sent when you click 📱 next to someone owing. Placeholders: {firstName}, {balance}, {currency}, {appName}. Bonus: "📱 Send to All Who Owe" — opens one SMS tab per debtor.' },
-  { target: null, title: '👨‍👩‍👧 Family discount (Pro)', body: 'When family grouping is ON, set how much non-primary family members save. 100% off = secondaries pay nothing. 50% off = half-price. Set per-member: Pricing in family → Primary or Secondary.' },
-  { target: null, title: '📅 Holidays', body: 'Mark dates with no class (e.g., Pesach, Christmas). Used by reports and (later) attendance to skip charges automatically.' },
-  { target: null, title: '🌙 Auto dark mode', body: 'Switches to dark theme between configured hours. Default 7pm–7am. Easier on the eyes when you check balances at night.' },
-  { target: null, title: '🎨 Theme', body: 'Light, Dark, or Custom — five color pickers (background, surface, text, accent, accent-dark). Make the app match your group\'s vibe.' },
-  { target: null, title: '📱 Install as an app', body: 'Chrome/Edge: install icon ⊕ in address bar.<br>iPhone: Share → Add to Home Screen.<br>Android: menu → Install app.<br><br>Once installed, opens fullscreen with its own icon — feels native.' },
-  { target: null, title: '💾 Data & backup', body: 'Save to File creates a JSON backup. Load File restores. Export CSV for spreadsheets. Reset wipes everything (with confirmation). The app pulses an orange backup reminder if you haven\'t saved in 7 days.' },
-
-  // Safety
-  { target: null, title: '🛡 Built-in safety', body: 'Every dangerous action confirms:<br><br>• Toggle changes ask "Are you sure?"<br>• Duplicate payment within 5 min → warning<br>• Unusually large amount → warning<br>• Charging a group twice on the same day → warning<br>• Day-of-week mismatch (e.g., Monday group on Tuesday) → warning' },
-
-  // Final
-  { target: null, title: '🎉 You\'re all set!', body: 'That\'s the whole app! Some tips:<br><br>• Click ⚙ Settings → 🎓 Take the Tour any time to revisit<br>• Save backups weekly<br>• Share the GitHub Pages URL on any device — your data stays on each device<br><br>Happy exercising! 💪' }
+  // --- Finale ---
+  { sec: 'finale', target: null, title: '🎉 You\'re ready!', body: 'You just walked through every feature. Tips:<br><br>• <strong>🎓 button</strong> bottom-right — restart this tour any time<br>• <strong>Save backups weekly</strong> for safety<br>• Share the URL on phone + laptop — each device keeps its own data<br><br>Happy organizing! 💪' }
 ];
 let _tourIdx = 0;
 let _tourPrevState = null;
 function startTour() {
   _tourPrevState = { editMode: editMode };
-  // Auto-enable Edit Mode for the tour (with a quick warning) so all features are visible
+  // Auto-enable Edit Mode for the tour so all features are visible
   if (!editMode) {
-    if (confirm('🎓 Tour will turn Edit Mode ON so you can see all features. Turn it off after if you prefer view-only.')) {
+    if (confirm('🎓 The tour will turn Edit Mode ON so you can see every feature. Turn it back OFF after if you like.')) {
       const sw = document.getElementById('mswitch');
       if (sw) { sw.checked = true; sw.dispatchEvent(new Event('change')); }
     }
   }
   _tourIdx = 0;
+  _attachTourKeyboard();
   _showTourStep();
 }
 function endTour() {
   ['tour-spot', 'tour-pop'].forEach(id => { const el = document.getElementById(id); if (el) el.remove(); });
+  _detachTourKeyboard();
+  // Clean up any confetti
+  document.querySelectorAll('.confetti-piece').forEach(c => c.remove());
 }
-function nextTour() { _tourIdx++; _showTourStep(); }
+function nextTour() {
+  if (_tourIdx >= _TOUR_STEPS.length - 1) { _finishTour(); return; }
+  _tourIdx++;
+  _showTourStep();
+}
 function prevTour() { if (_tourIdx > 0) { _tourIdx--; _showTourStep(); } }
-function _showTourStep() {
+function _finishTour() {
   endTour();
-  if (_tourIdx >= _TOUR_STEPS.length) {
-    alert('🎉 Tour complete! You can restart it any time from Settings → 🎓 Take the Tour.');
-    return;
+  _launchConfetti();
+  setTimeout(() => alert('🎉 You\'re ready! Open Settings → 🎓 Take the tour any time to revisit.'), 600);
+}
+function _launchConfetti() {
+  const colors = ['#2d6a9f', '#27ae60', '#e67e22', '#7c3aed', '#f39c12', '#e74c3c', '#1abc9c'];
+  for (let i = 0; i < 60; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti-piece';
+    c.style.left = (Math.random() * 100) + 'vw';
+    c.style.background = colors[Math.floor(Math.random() * colors.length)];
+    c.style.animationDelay = (Math.random() * 0.4) + 's';
+    c.style.animationDuration = (1.8 + Math.random() * 1.5) + 's';
+    c.style.transform = 'rotate(' + (Math.random() * 360) + 'deg)';
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 4000);
   }
+}
+function _tourKeyHandler(e) {
+  if (!document.getElementById('tour-pop')) return;
+  if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); nextTour(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); prevTour(); }
+  else if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+}
+function _attachTourKeyboard() { document.addEventListener('keydown', _tourKeyHandler); }
+function _detachTourKeyboard() { document.removeEventListener('keydown', _tourKeyHandler); }
+function _showTourStep() {
+  endTour(); // remove previous pop/spot but keep keyboard handler
+  _attachTourKeyboard(); // re-attach since endTour detached it
+  if (_tourIdx >= _TOUR_STEPS.length) { _finishTour(); return; }
   const step = _TOUR_STEPS[_tourIdx];
   // Pre-action: switch tab if needed
   if (step.preTab) try { showTab(step.preTab); } catch (e) {}
@@ -5266,18 +5379,28 @@ function _renderTourStep(step) {
   }
   document.body.appendChild(spot);
 
+  // v23: Section badge + progress bar
+  const sec = step.sec ? (_TOUR_SECTIONS[step.sec] || null) : null;
+  const totalSteps = _TOUR_STEPS.length;
+  const progressPct = Math.round(((_tourIdx + 1) / totalSteps) * 100);
+  const isLast = _tourIdx === totalSteps - 1;
+
   const pop = document.createElement('div');
   pop.id = 'tour-pop';
-  const isLast = _tourIdx === _TOUR_STEPS.length - 1;
+  if (!target) pop.classList.add('centered');
   pop.innerHTML =
     '<span class="tour-arrow"></span>' +
-    '<h3>' + step.title + '</h3>' +
-    '<p>' + step.body + '</p>' +
-    '<div class="tour-actions">' +
-      '<span class="tour-progress">Step ' + (_tourIdx + 1) + ' of ' + _TOUR_STEPS.length + '</span>' +
-      '<button class="tp-skip" onclick="endTour()">Skip</button>' +
-      (_tourIdx > 0 ? '<button class="tp-prev" onclick="prevTour()">← Previous</button>' : '') +
-      '<button class="tp-next" onclick="nextTour()">' + (isLast ? 'Finish 🎉' : 'Next →') + '</button>' +
+    '<div class="tour-bar"><div class="tour-bar-fill" style="width:' + progressPct + '%"></div></div>' +
+    '<div class="tour-content">' +
+      (sec ? '<span class="tour-section-badge ' + sec.cls + '">' + sec.name + '</span>' : '') +
+      '<h3>' + step.title + '</h3>' +
+      '<p>' + step.body + '</p>' +
+    '</div>' +
+    '<div class="tour-footer">' +
+      '<span class="tour-progress">Step ' + (_tourIdx + 1) + ' of ' + totalSteps + '</span>' +
+      '<button class="tp-skip" onclick="endTour()" title="Esc">Skip</button>' +
+      (_tourIdx > 0 ? '<button class="tp-prev" onclick="prevTour()" title="←">← Back</button>' : '') +
+      '<button class="' + (isLast ? 'tp-finish' : 'tp-next') + '" onclick="nextTour()" title="→">' + (isLast ? 'Finish 🎉' : 'Next →') + '</button>' +
     '</div>';
   document.body.appendChild(pop);
 
@@ -5304,7 +5427,6 @@ function _renderTourStep(step) {
   } else {
     pop.style.top = '50%';
     pop.style.left = '50%';
-    pop.style.transform = 'translate(-50%, -50%)';
   }
 }
 
@@ -6468,5 +6590,12 @@ window.addEventListener('beforeunload', function(ev) {
 
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  // v23: configure pdf.js worker
+  if (window['pdfjsLib']) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
 </body>
 </html>
