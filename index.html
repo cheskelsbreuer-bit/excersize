@@ -5298,6 +5298,25 @@ async function _eg_decrypt(b64, passphrase) {
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct);
   return JSON.parse(new TextDecoder().decode(pt));
 }
+// v26: Normalize various Supabase URL formats to the bare project URL
+// Handles: https://abc.supabase.co/rest/v1/  →  https://abc.supabase.co
+//          https://supabase.com/dashboard/project/abc  →  https://abc.supabase.co
+//          trailing slashes, extra paths, etc.
+function _eg_normalizeSupabaseUrl(input) {
+  let url = (input || '').trim();
+  if (!url) return '';
+  // Add https:// if missing
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  // Pattern 1: extract project ref from project URL
+  let m = url.match(/^https?:\/\/([a-z0-9]+)\.supabase\.co/i);
+  if (m) return 'https://' + m[1] + '.supabase.co';
+  // Pattern 2: extract project ref from dashboard URL
+  m = url.match(/supabase\.com\/dashboard\/project\/([a-z0-9]+)/i);
+  if (m) return 'https://' + m[1] + '.supabase.co';
+  // Fallback: strip trailing slashes and any /rest/v1...
+  return url.replace(/\/+$/, '').replace(/\/rest\/v1.*$/i, '');
+}
+
 // Stable user ID derived from passphrase — same passphrase = same row
 async function _eg_userIdFromPassphrase(passphrase) {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('exercise-app:v1:' + passphrase));
@@ -5342,15 +5361,18 @@ async function syncNow(direction) {
     if (cfg.cloudSyncProvider !== 'supabase') throw new Error('Cloud sync provider is not Supabase. Set it in Advanced → Cloud sync.');
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('Supabase URL and anon key are required.');
     if (!cfg.syncPassphrase || cfg.syncPassphrase.length < 8) throw new Error('Set a sync passphrase (8+ chars) in Advanced → Cloud sync.');
+    // v26 BUGFIX: normalize URL in case it has /rest/v1 or trailing slash
+    const cleanUrl = _eg_normalizeSupabaseUrl(cfg.supabaseUrl);
+    if (cleanUrl !== cfg.supabaseUrl) { cfg.supabaseUrl = cleanUrl; }
     const userId = await _eg_userIdFromPassphrase(cfg.syncPassphrase);
-    const cloud = await _eg_supabasePull(cfg.supabaseUrl, cfg.supabaseAnonKey, userId);
+    const cloud = await _eg_supabasePull(cleanUrl, cfg.supabaseAnonKey, userId);
     const cloudTs = cloud ? new Date(cloud.updated_at).getTime() : 0;
     const localTs = DB._savedAt || 0;
 
     let didPush = false, didPull = false;
     if (direction === 'push' || (direction === 'auto' && (!cloud || localTs > cloudTs))) {
       const encrypted = await _eg_encrypt(DB, cfg.syncPassphrase);
-      await _eg_supabasePush(cfg.supabaseUrl, cfg.supabaseAnonKey, userId, encrypted);
+      await _eg_supabasePush(cleanUrl, cfg.supabaseAnonKey, userId, encrypted);
       didPush = true;
     } else if (direction === 'pull' || (direction === 'auto' && cloud && cloudTs > localTs)) {
       const decrypted = await _eg_decrypt(cloud.data, cfg.syncPassphrase);
@@ -5440,11 +5462,14 @@ function openCloudSyncWizard() {
 }
 
 async function _eg_testCloudSync() {
-  const url = (document.getElementById('sync-url').value || '').trim().replace(/\/$/, '');
+  const rawUrl = (document.getElementById('sync-url').value || '').trim();
+  const url = _eg_normalizeSupabaseUrl(rawUrl);
   const key = (document.getElementById('sync-key').value || '').trim();
   const pass = (document.getElementById('sync-pass').value || '').trim();
   if (!url || !key || !pass) { alert('Fill in all three: URL, anon key, passphrase.'); return; }
   if (pass.length < 8) { alert('Passphrase must be at least 8 characters.'); return; }
+  // Update the URL field to show the normalized version so user sees what we'll use
+  if (url !== rawUrl) document.getElementById('sync-url').value = url;
   try {
     const userId = await _eg_userIdFromPassphrase(pass);
     // Try a select on the table
@@ -5453,7 +5478,11 @@ async function _eg_testCloudSync() {
     });
     if (!r.ok) {
       const txt = await r.text();
-      alert('❌ Connection failed (' + r.status + '): ' + txt.slice(0, 300) + '\n\nMost common cause: you haven\'t run the SQL script yet (Step 2). Or the URL/key is wrong.');
+      let hint = '';
+      if (r.status === 404 && txt.indexOf('Invalid path') >= 0) hint = '\n\n💡 Looks like a URL issue. The cleaned URL we used was:\n' + url + '\n\nDouble-check it matches your Supabase project URL.';
+      else if (r.status === 404 || txt.indexOf('relation') >= 0 || txt.indexOf('does not exist') >= 0) hint = '\n\n💡 The "app_data" table doesn\'t exist yet — you need to run the SQL script (Step 2) in your Supabase SQL Editor first.';
+      else if (r.status === 401 || r.status === 403) hint = '\n\n💡 The anon key looks wrong. Make sure you copied the "anon public" key, NOT the "service_role" key. The anon key is long and starts with "eyJ".';
+      alert('❌ Connection failed (HTTP ' + r.status + '):\n\n' + txt.slice(0, 300) + hint);
       return;
     }
     const arr = await r.json();
@@ -5463,12 +5492,12 @@ async function _eg_testCloudSync() {
       alert('✅ Connection works! Found existing cloud data for this passphrase (last updated by another device). Click "Save & activate sync" — the cloud version will be pulled down.');
     }
   } catch (e) {
-    alert('❌ Connection error: ' + e.message);
+    alert('❌ Connection error: ' + e.message + '\n\nTried URL: ' + url);
   }
 }
 
 async function _eg_saveCloudSync() {
-  const url = (document.getElementById('sync-url').value || '').trim().replace(/\/$/, '');
+  const url = _eg_normalizeSupabaseUrl(document.getElementById('sync-url').value || '');
   const key = (document.getElementById('sync-key').value || '').trim();
   const pass = (document.getElementById('sync-pass').value || '').trim();
   if (!url || !key || !pass) { alert('Fill in all three: URL, anon key, passphrase.'); return; }
