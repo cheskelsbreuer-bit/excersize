@@ -5366,6 +5366,10 @@ async function _eg_userIdFromPassphrase(passphrase) {
 
 // Supabase REST helpers (no SDK, just fetch)
 async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
+  // v29 BUGFIX: stamp cloud's updated_at with DB._savedAt (the actual last user-change time),
+  // NOT Date.now(). Otherwise localTs vs cloudTs comparison drifts apart on every sync and
+  // browsers always think their local data is newer than the cloud, so they push and never pull.
+  const ts = (typeof DB !== 'undefined' && DB._savedAt) ? DB._savedAt : Date.now();
   const resp = await fetch(url + '/rest/v1/app_data?on_conflict=user_id', {
     method: 'POST',
     headers: {
@@ -5373,7 +5377,7 @@ async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates,return=minimal'
     },
-    body: JSON.stringify({ user_id: userId, data: encryptedData, updated_at: new Date().toISOString(), device_label: _deviceLabel() })
+    body: JSON.stringify({ user_id: userId, data: encryptedData, updated_at: new Date(ts).toISOString(), device_label: _deviceLabel() })
   });
   if (!resp.ok) {
     const txt = await resp.text();
@@ -5433,14 +5437,21 @@ async function syncNow(direction, opts) {
     cfg.lastSyncAt = Date.now();
     cfg.lastSyncDirection = didPush ? 'push' : (didPull ? 'pull' : 'no-change');
     cfg.lastSyncError = '';
-    saveDB();
+    // v29 BUGFIX: persist DB without bumping DB._savedAt (which would break the
+    // localTs > cloudTs comparison on the next sync and cause permanent push-only behavior).
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
+    idbSet(STORAGE_KEY, DB).catch(() => {});
+    // v29: visible decision log so cross-browser sync issues are debuggable from the console.
+    console.log('[sync]', cfg.lastSyncDirection, '| direction:', direction, '| localTs:', new Date(localTs).toISOString(), '| cloudTs:', cloudTs ? new Date(cloudTs).toISOString() : 'none');
     // v27: only show the big floating indicator when NOT silent (i.e., for manual syncs / errors)
     if (!silent) _eg_setSyncStatus('ok', didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced'));
     _eg_updateHeaderSyncPill('ok');
     return { ok: true, didPush, didPull, cloudTs, localTs };
   } catch (e) {
     DB.settings.backend.lastSyncError = e.message;
-    saveDB();
+    // v29: same — persist error state without bumping _savedAt
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (_) {}
+    idbSet(STORAGE_KEY, DB).catch(() => {});
     // Errors ALWAYS show — silent or not. Data integrity matters.
     _eg_setSyncStatus('err', '⚠ Sync failed: ' + e.message);
     _eg_updateHeaderSyncPill('err');
