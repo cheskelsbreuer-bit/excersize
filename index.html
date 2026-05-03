@@ -547,7 +547,8 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   <button data-tab="archived" class="corner-btn">🗃 Former</button>
   <button data-tab="lookup" class="corner-btn">🔍 Lookup</button>
   <button data-tab="settings" class="corner-btn edit-only">⚙ Settings</button>
-  <button data-tab="advanced" class="corner-btn edit-only" data-min-level="pro">🔧 Advanced</button>
+  <!-- v26: Advanced removed from top nav. Reach it from Settings → 🔧 Advanced card -->
+  <button data-tab="advanced" class="corner-btn edit-only" style="display:none">🔧 Advanced</button>
 </nav>
 
 <!-- DASHBOARD -->
@@ -4754,14 +4755,20 @@ function sendEmailReminder(name) {
   logAction('member', 'email', 'Email reminder opened for ' + name);
 }
 
-// ---------- v21 #7: Auto-backup reminder (v23: more aggressive — 1 day) ----------
+// ---------- v21 #7: Auto-backup reminder (v26: respects cloud sync + permanent dismiss) ----------
 function _checkBackupReminder() {
   _ensureSettingsSchema();
-  const last = DB.settings.lastBackupAt || 0;
-  const days = (Date.now() - last) / (1000 * 60 * 60 * 24);
   const banner = document.getElementById('backup-reminder');
   if (!banner) return;
-  // v23: if member count > 0 (real data), warn after 1 day
+  const cfg = DB.settings.backend;
+  // v26: if cloud sync is active and recently synced, NO backup nag — cloud IS the backup
+  const cloudActive = cfg && cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase;
+  const cloudRecent = cloudActive && cfg.lastSyncAt && (Date.now() - cfg.lastSyncAt) < 7 * 24 * 60 * 60 * 1000;
+  if (cloudRecent) { banner.style.display = 'none'; return; }
+  // v26: permanent dismiss support
+  if (DB.settings.backupReminderDisabled) { banner.style.display = 'none'; return; }
+  const last = DB.settings.lastBackupAt || 0;
+  const days = (Date.now() - last) / (1000 * 60 * 60 * 24);
   const hasData = (DB.members || []).length > 0;
   const threshold = hasData ? 1 : 7;
   if (last === 0 || days > threshold) {
@@ -4770,10 +4777,12 @@ function _checkBackupReminder() {
       ? '⚠️ <strong>You haven\'t saved a backup file yet.</strong> Browser data can be cleared at any time — backups are your only insurance.'
       : '⚠️ <strong>It\'s been ' + Math.floor(days) + ' day' + (Math.floor(days) === 1 ? '' : 's') + ' since your last backup.</strong> Browser storage can be wiped — save now to be safe.')
       + ' <button class="btn btn-green btn-sm" style="margin-left:8px" onclick="exportBackup()">💾 Save Backup Now</button>'
-      + ' <button class="btn btn-gray btn-sm" onclick="document.getElementById(\'backup-reminder\').style.display=\'none\'">Dismiss for now</button>';
-    banner.style.background = (last === 0 || days > 7) ? '#fdecea' : '#fff3cd';
-    banner.style.borderBottomColor = (last === 0 || days > 7) ? '#c0392b' : '#ffc107';
-    banner.style.color = (last === 0 || days > 7) ? '#6b2118' : '#856404';
+      + ' <button class="btn btn-gray btn-sm" onclick="document.getElementById(\'backup-reminder\').style.display=\'none\'">Dismiss</button>'
+      + ' <button class="btn btn-gray btn-sm" onclick="if(confirm(\'Stop showing the backup reminder forever? You can re-enable it in Advanced settings.\')){DB.settings.backupReminderDisabled=true;saveDB();document.getElementById(\'backup-reminder\').style.display=\'none\';}">Stop showing</button>';
+    // v26: keep the banner yellow (not red), less alarming
+    banner.style.background = '#fff3cd';
+    banner.style.borderBottomColor = '#ffc107';
+    banner.style.color = '#856404';
   } else {
     banner.style.display = 'none';
   }
@@ -5440,7 +5449,7 @@ function openCloudSyncWizard() {
     '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">⚙ Step 2: Run the SQL script (one-time setup)</summary>' +
       '<p style="font-size:0.85rem;color:#555;margin:6px 0">In your Supabase dashboard → click <strong>SQL Editor</strong> (left sidebar) → <strong>New query</strong> → paste this script and click <strong>Run</strong>:</p>' +
-      '<textarea id="sync-sql" readonly style="width:100%;height:150px;font-family:monospace;font-size:0.78rem;padding:10px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff" onclick="this.select()">-- Exercise Group Cloud Sync setup\n-- Run this once in Supabase SQL Editor\n\nCREATE TABLE IF NOT EXISTS app_data (\n  user_id TEXT PRIMARY KEY,\n  data TEXT NOT NULL,\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  device_label TEXT\n);\n\n-- Allow anonymous read/write (data is end-to-end encrypted, so this is safe)\nALTER TABLE app_data ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY "Allow anon read"  ON app_data FOR SELECT TO anon USING (true);\nCREATE POLICY "Allow anon write" ON app_data FOR INSERT TO anon WITH CHECK (true);\nCREATE POLICY "Allow anon update" ON app_data FOR UPDATE TO anon USING (true) WITH CHECK (true);</textarea>' +
+      '<textarea id="sync-sql" readonly style="width:100%;height:200px;font-family:monospace;font-size:0.78rem;padding:10px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff" onclick="this.select()">-- Exercise Group Cloud Sync setup\n-- Safe to re-run any time (idempotent)\n\nCREATE TABLE IF NOT EXISTS app_data (\n  user_id TEXT PRIMARY KEY,\n  data TEXT NOT NULL,\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  device_label TEXT\n);\n\n-- Allow anonymous read/write — data is end-to-end encrypted in the app, so this is safe\nALTER TABLE app_data ENABLE ROW LEVEL SECURITY;\n\nDROP POLICY IF EXISTS "Allow anon read"   ON app_data;\nDROP POLICY IF EXISTS "Allow anon write"  ON app_data;\nDROP POLICY IF EXISTS "Allow anon update" ON app_data;\n\nCREATE POLICY "Allow anon read"   ON app_data FOR SELECT TO anon USING (true);\nCREATE POLICY "Allow anon write"  ON app_data FOR INSERT TO anon WITH CHECK (true);\nCREATE POLICY "Allow anon update" ON app_data FOR UPDATE TO anon USING (true) WITH CHECK (true);</textarea>' +
       '<button class="btn btn-blue btn-sm" onclick="navigator.clipboard.writeText(document.getElementById(\'sync-sql\').value);alert(\'📋 SQL copied to clipboard\')" style="margin-top:6px">📋 Copy SQL</button>' +
     '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔑 Step 3: Paste your project credentials</summary>' +
@@ -5691,11 +5700,14 @@ function runSelfTest() {
   return issues;
 }
 function showSelfTestBanner() {
+  _ensureSettingsSchema();
   const issues = runSelfTest();
   const banner = document.getElementById('selftest-banner');
   if (!banner) return;
   if (!issues.length) { banner.style.display = 'none'; return; }
+  // v26: permanent dismiss support (only suppresses LOW + MEDIUM — high always shows)
   const high = issues.filter(i => i.severity === 'high').length;
+  if (DB.settings.selfTestDismissed && high === 0) { banner.style.display = 'none'; return; }
   const med = issues.filter(i => i.severity === 'medium').length;
   const low = issues.filter(i => i.severity === 'low').length;
   banner.style.display = 'block';
@@ -5707,7 +5719,8 @@ function showSelfTestBanner() {
     (med > 0 ? med + ' warning · ' : '') +
     (low > 0 ? low + ' minor · ' : '') +
     '<button class="btn btn-sm" style="margin-left:8px;background:#fff;color:#222" onclick="showSelfTestDetails()">Show details</button>' +
-    '<button class="btn btn-sm" style="margin-left:4px;background:transparent;color:inherit" onclick="document.getElementById(\'selftest-banner\').style.display=\'none\'">Dismiss</button>';
+    '<button class="btn btn-sm" style="margin-left:4px;background:transparent;color:inherit" onclick="document.getElementById(\'selftest-banner\').style.display=\'none\'">Dismiss</button>' +
+    (high === 0 ? '<button class="btn btn-sm" style="margin-left:4px;background:transparent;color:inherit;text-decoration:underline" onclick="if(confirm(\'Stop showing minor data warnings? Critical issues will still show. You can re-enable in Advanced.\')){DB.settings.selfTestDismissed=true;saveDB();document.getElementById(\'selftest-banner\').style.display=\'none\';}">Stop showing</button>' : '');
 }
 function showSelfTestDetails() {
   const issues = runSelfTest();
@@ -6724,61 +6737,71 @@ function renderAdvanced() {
     return '<div class="fg" style="margin-bottom:10px"><label style="font-weight:600;color:#444;font-size:0.85rem">' + label + '</label><input type="text" value="' + _escAttr(v) + '" onchange="setBackendLabel(\'' + key + '\', this.value)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">' + (hint ? '<div class="hint" style="font-size:0.78rem;color:#888;margin-top:4px">' + hint + '</div>' : '') + '</div>';
   };
 
-  const section = (icon, title, desc, body) =>
-    '<details open style="background:#fff;border-radius:12px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px">' +
-      '<summary style="cursor:pointer;font-weight:700;font-size:1.05rem;color:#1a3a5c;list-style:none;padding:4px 0">' + icon + ' ' + title + '</summary>' +
-      (desc ? '<p style="font-size:0.85rem;color:#666;margin:8px 0 14px">' + desc + '</p>' : '') +
+  // v26: Sections COLLAPSED by default (less overwhelming). User opens what they want.
+  const section = (icon, title, desc, body, openByDefault) =>
+    '<details' + (openByDefault ? ' open' : '') + ' style="background:#fff;border-radius:12px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:10px">' +
+      '<summary style="cursor:pointer;font-weight:700;font-size:1.05rem;color:#1a3a5c;list-style:none;padding:4px 0;display:flex;align-items:center;gap:10px"><span style="font-size:1.4rem">' + icon + '</span><span style="flex:1">' + title + '</span><span style="font-size:0.75rem;color:#888;font-weight:400">▼ click to open</span></summary>' +
+      (desc ? '<p style="font-size:0.88rem;color:#555;margin:10px 0 14px;line-height:1.5">' + desc + '</p>' : '') +
       '<div style="margin-top:8px">' + body + '</div>' +
     '</details>';
 
-  let html = '';
+  // Friendly intro at the top
+  let html = '<div style="background:linear-gradient(135deg,#fff8e1,#ffe9b3);border:2px solid #f0a500;border-radius:12px;padding:18px 22px;margin-bottom:16px">' +
+    '<div style="font-size:1.05rem;font-weight:700;color:#856404;margin-bottom:6px">👋 Welcome to Advanced settings</div>' +
+    '<p style="font-size:0.88rem;color:#7a5500;line-height:1.5;margin:0">Each section below is collapsed — click to open. Don\'t worry if some look technical, you don\'t need any of them. Use these only when you want more control. <strong>Most people leave everything here as default.</strong></p>' +
+  '</div>';
 
-  // Section 1: Identity
-  html += section('👤', 'Identity & organization', 'Used as default sender + identity in cloud sync, statements, receipts.',
-    advRow('Your email (owner)', 'userIdentity', 'text') +
-    advRow('Organization / business name', 'organizationName', 'text', 'Falls back to App Name if blank.')
+  // Section 1: Identity (start opened — most useful)
+  html += section('👤', 'Your name & business',
+    'Tell the app who you are. Used in receipts, statements, and emails sent to members.',
+    advRow('Your email', 'userIdentity', 'text', 'For example: sara@gmail.com') +
+    advRow('Your business or group name', 'organizationName', 'text', 'For example: "Sara\'s Yoga Group". Shows on printed statements.'),
+    true // open
   );
 
   // Section 2: UI / interface
-  html += section('🎨', 'UI / interface', 'Tweak the look and feel without touching CSS.',
-    advRow('UI density', 'uiDensity', 'select', 'Compact = tighter spacing. Spacious = roomier.', [{v:'compact', l:'Compact'}, {v:'comfortable', l:'Comfortable (default)'}, {v:'spacious', l:'Spacious'}]) +
-    advRow('Reduce animations', 'reduceAnimations', 'toggle', 'For users with motion sensitivity or older devices.') +
-    advRow('High-contrast mode', 'highContrast', 'toggle', 'Bolder borders, stronger color separation.') +
-    advRow('Large text', 'largeText', 'toggle', 'Bumps font sizes up ~15%.') +
-    advRow('Default tab on app open', 'defaultTab', 'select', null, [{v:'dashboard', l:'Dashboard'}, {v:'members', l:'Members'}, {v:'payments', l:'Payments'}, {v:'groups', l:'Groups'}, {v:'notes', l:'Notes'}, {v:'reports', l:'Reports'}]) +
-    advRow('Show "Auto-saved" indicator in header', 'headerShowAutoSaved', 'toggle') +
-    advRow('Show subtitle ("X active members") in header', 'headerShowSubtitle', 'toggle') +
-    advRow('Alternating table row colors', 'tableAlternatingRows', 'toggle') +
-    advRow('Members per page in tables', 'tablePageSize', 'number', 'Default 25.')
+  html += section('🎨', 'How the app looks',
+    'Make the screen tighter, roomier, easier to read, or open to your favorite tab.',
+    advRow('How tight or spacious?', 'uiDensity', 'select', 'Tight = more fits on screen. Spacious = bigger, easier to tap.', [{v:'compact', l:'🤏 Compact (tight)'}, {v:'comfortable', l:'👌 Comfortable (default)'}, {v:'spacious', l:'🤲 Spacious (roomy)'}]) +
+    advRow('Turn off animations', 'reduceAnimations', 'toggle', 'For people who get dizzy from movement, or for older/slower devices.') +
+    advRow('High-contrast mode', 'highContrast', 'toggle', 'Stronger borders and colors. Easier to see on bright screens.') +
+    advRow('Bigger text everywhere', 'largeText', 'toggle', 'Increases all text by about 15%. Good for older eyes.') +
+    advRow('Open to which page on startup?', 'defaultTab', 'select', 'Pick the page you check first every day.', [{v:'dashboard', l:'📊 Dashboard'}, {v:'members', l:'👥 Members'}, {v:'payments', l:'💰 Payments'}, {v:'groups', l:'🗂 Groups'}, {v:'notes', l:'📝 Notes'}, {v:'reports', l:'📈 Reports'}]) +
+    advRow('Show "Auto-saved" indicator at top', 'headerShowAutoSaved', 'toggle', 'The little gray pill near the top showing save status.') +
+    advRow('Show member count under the title', 'headerShowSubtitle', 'toggle', 'The "57 active members · $5,983 outstanding" line.') +
+    advRow('Alternating row colors in tables', 'tableAlternatingRows', 'toggle') +
+    advRow('How many rows per page?', 'tablePageSize', 'number', 'When you have lots of members, the table splits into pages of this many rows.')
   );
 
   // Section 3: Dashboard layout
-  html += section('📊', 'Dashboard layout', 'Show or hide each section of the Dashboard.',
-    advRow('Show summary stats row', 'dashShowStats', 'toggle') +
-    advRow('Show "Members who owe" table', 'dashShowOweTable', 'toggle') +
-    advRow('Show recent payments', 'dashShowRecentPayments', 'toggle') +
-    advRow('Show birthdays this month', 'dashShowBirthdays', 'toggle')
+  html += section('📊', 'What shows on your dashboard',
+    'The dashboard is the first page you see. Hide sections you don\'t care about.',
+    advRow('Show the colored summary boxes (active, owe, etc.)', 'dashShowStats', 'toggle') +
+    advRow('Show "Members Who Owe Money" list', 'dashShowOweTable', 'toggle') +
+    advRow('Show recent payments list', 'dashShowRecentPayments', 'toggle') +
+    advRow('Show "Birthdays This Month"', 'dashShowBirthdays', 'toggle')
   );
 
   // Section 4: Display & formatting
-  html += section('💰', 'Currency & number formatting',
-    'Fine-grained control over how money displays everywhere.',
-    advRow('Currency symbol position', 'currencyPosition', 'select', null, [{v:'before', l:'Before amount ($15)'}, {v:'after', l:'After amount (15$)'}]) +
-    advRow('Decimal places', 'decimalPlaces', 'select', '0 = $15 · 2 = $15.00', [{v:0, l:'0 (rounded)'}, {v:1, l:'1 ($15.0)'}, {v:2, l:'2 ($15.00)'}]) +
-    advRow('Thousands separator', 'thousandsSeparator', 'select', null, [{v:',', l:'Comma (1,234)'}, {v:'.', l:'Period (1.234)'}, {v:' ', l:'Space (1 234)'}, {v:'', l:'None (1234)'}]) +
-    advRow('Negative number style', 'negativeStyle', 'select', null, [{v:'minus', l:'Minus sign (-$5)'}, {v:'parens', l:'Parentheses (($5))'}]) +
-    advRow('Show dates as "3 days ago" instead of "04/26"', 'dateRelative', 'toggle')
+  html += section('💰', 'How money is shown',
+    'Change how dollars and cents look across the whole app.',
+    advRow('Where does the $ go?', 'currencyPosition', 'select', null, [{v:'before', l:'Before the number (like $15)'}, {v:'after', l:'After the number (like 15$)'}]) +
+    advRow('How many decimal places?', 'decimalPlaces', 'select', 'Examples: 0 → $15 · 2 → $15.00 · 2 lets you record exact cents.', [{v:0, l:'0 — round to whole dollars ($15)'}, {v:1, l:'1 — one decimal ($15.0)'}, {v:2, l:'2 — full cents ($15.00, recommended)'}]) +
+    advRow('Big numbers separator (1,234 vs 1.234)', 'thousandsSeparator', 'select', null, [{v:',', l:'Comma — 1,234 (US/UK)'}, {v:'.', l:'Period — 1.234 (Europe)'}, {v:' ', l:'Space — 1 234'}, {v:'', l:'None — 1234'}]) +
+    advRow('Negative numbers look like…', 'negativeStyle', 'select', null, [{v:'minus', l:'Minus sign — -$5'}, {v:'parens', l:'Parentheses — ($5)'}]) +
+    advRow('Show "3 days ago" instead of dates?', 'dateRelative', 'toggle', 'When ON, the app says "yesterday" or "3 days ago" instead of "04/26/2026".')
   );
 
   // Section 5: Custom labels (rebranding)
-  html += section('🏷', 'Custom labels (rebrand)', 'Rename core concepts to match YOUR business. Examples: "Members" → "Customers", "Payments" → "Charges", etc.',
-    labelRow('"Member" (singular)', 'member') +
+  html += section('🏷', 'Rename things to match your business',
+    'Don\'t want to call them "Members"? Call them "Customers" or "Students" or whatever you like. The new word will appear everywhere automatically.<br><br><em>Example: change "Member" to "Student" → the Members tab becomes "Students", and "Add new member" becomes "Add new student."</em>',
+    labelRow('"Member" (singular)', 'member', 'Examples: Customer, Student, Client, Patient') +
     labelRow('"Members" (plural)', 'members') +
-    labelRow('"Payment" (singular)', 'payment') +
+    labelRow('"Payment" (singular)', 'payment', 'Examples: Charge, Invoice, Bill') +
     labelRow('"Payments" (plural)', 'payments') +
-    labelRow('"Group" (singular)', 'group') +
+    labelRow('"Group" (singular)', 'group', 'Examples: Class, Session, Cohort') +
     labelRow('"Groups" (plural)', 'groups') +
-    labelRow('"Combo" (note item)', 'combo') +
+    labelRow('"Combo" (a note item)', 'combo', 'Examples: Routine, Workout, Lesson') +
     labelRow('"Combos" (plural)', 'combos')
   );
 
@@ -6786,8 +6809,8 @@ function renderAdvanced() {
   const syncOn = bk.cloudSyncProvider === 'supabase' && bk.supabaseUrl && bk.syncPassphrase;
   const lastSync = bk.lastSyncAt ? new Date(bk.lastSyncAt).toLocaleString() : 'never';
   const syncErr = bk.lastSyncError ? '<div style="background:#fdecea;border-left:4px solid #c0392b;padding:8px 10px;border-radius:6px;font-size:0.8rem;color:#721c24;margin-bottom:8px">⚠ Last sync error: ' + esc(bk.lastSyncError) + '</div>' : '';
-  html += section('☁️', 'Cloud sync — multi-device (Supabase + end-to-end encrypted)',
-    'Sync your data across all your devices. Data is encrypted on YOUR device first — Supabase only sees ciphertext.',
+  html += section('☁️', 'Cloud sync — share data between phone, tablet, laptop',
+    'Make your data automatically appear on every device you use. Your data is <strong>locked with a password</strong> on your device before being uploaded — even the people running the cloud service can\'t read it.',
     syncErr +
     '<div style="background:' + (syncOn ? '#e8f5e9' : '#fff8e1') + ';border-left:4px solid ' + (syncOn ? '#27ae60' : '#f0b400') + ';padding:12px;border-radius:8px;margin-bottom:12px">' +
       '<div style="font-weight:700;color:' + (syncOn ? '#155724' : '#856404') + '">' + (syncOn ? '☁ Cloud sync is ACTIVE' : '☁ Cloud sync is OFF') + '</div>' +
@@ -6814,30 +6837,46 @@ function renderAdvanced() {
     '</details>'
   );
 
-  // Section 7: Integrations / webhooks
-  html += section('📡', 'Webhooks & integrations',
-    'POST every payment + group charge to your URL. Use Zapier, Make, IFTTT, n8n to connect to anything.',
-    advRow('Webhook URL', 'webhookUrl', 'text', 'Try free with webhook.site to test. Fires on payment.recorded and group.charged events.') +
+  // Section 7: Integrations / webhooks (technical — leave collapsed and warn)
+  html += section('📡', 'Connect to other apps (advanced)',
+    '<strong>For technical users only.</strong> If you use tools like Zapier, IFTTT, or Make, you can paste a "webhook URL" here. The app will send a message to that URL every time a payment happens, and your other tool can react. Most people leave this blank — you don\'t need it.',
+    advRow('Webhook URL (paste from Zapier / IFTTT / Make)', 'webhookUrl', 'text', 'Looks like: https://hooks.zapier.com/... · Leave blank if you don\'t use this.') +
     '<button class="btn btn-blue btn-sm" onclick="_testWebhook()" style="margin-top:6px">📡 Send test event</button>'
   );
 
   // Section 8: Validation rules
-  html += section('⚖️', 'Validation rules & thresholds',
-    'How sensitive should the safety warnings be? Set 0 to disable any threshold.',
-    advRow('Auto-archive members inactive for X months', 'autoArchiveMonths', 'number', '0 = never. Reviewed each app load. Members with no payment in this many months get auto-archived.') +
-    advRow('Anomaly multiplier (warn if payment > X × per-class)', 'anomalyChargeMultiplier', 'number', 'Default 50.') +
-    advRow('Duplicate-payment window (minutes)', 'duplicateWindowMinutes', 'number', 'Same member + same amount within this many minutes triggers a warning. Default 5.') +
-    advRow('"Owes too much" balance threshold (' + _curr() + ')', 'maxBalanceWarning', 'number', 'Default 500. (Currently informational.)') +
-    advRow('Phone format regex (validation)', 'phoneFormat', 'text', 'Optional. Example: ^[0-9-+() ]{7,}$') +
-    advRow('Email format regex (validation)', 'emailFormat', 'text')
+  html += section('⚖️', 'Smart warnings — when does the app warn me?',
+    'The app shows warnings when something looks unusual. Adjust how strict those warnings are. Set any number to 0 to turn that warning off.',
+    advRow('Auto-archive inactive members after X months', 'autoArchiveMonths', 'number', '0 = never auto-archive. Set to 6 = members who haven\'t paid in 6 months auto-move to "Former Members."') +
+    advRow('Warn me on huge payments (X times bigger than per-class)', 'anomalyChargeMultiplier', 'number', 'Default 50. So if a member\'s class fee is $15, the app warns if you record a payment over $750. Catches typos like an extra zero.') +
+    advRow('Warn me on duplicate payments (within X minutes)', 'duplicateWindowMinutes', 'number', 'Default 5. If you save the same member + same amount twice in 5 minutes, the app asks "are you sure?"') +
+    advRow('"Owes too much" warning level (' + _curr() + ')', 'maxBalanceWarning', 'number', 'Default 500. Shown for awareness — doesn\'t block anything.') +
+    advRow('Phone format checker (optional, advanced)', 'phoneFormat', 'text', 'Leave blank unless you know what regex is. Example: ^[0-9-+() ]{7,}$ requires phone to be 7+ digits/dashes/parens.') +
+    advRow('Email format checker (optional, advanced)', 'emailFormat', 'text', 'Leave blank unless you know regex. The app already does basic email validation by default.')
   );
 
   // Section 9: Confirmations / safety
-  html += section('🛡', 'Confirmation prompts (master switches)',
-    'Master toggles for the smart safety prompts.',
-    advRow('Confirm before deleting payments', 'confirmDeletePayment', 'toggle') +
-    advRow('Extra warning for risky archive (credit/debt members)', 'confirmRiskyArchive', 'toggle') +
-    advRow('Smart Charge-Everyone warnings', 'smartChargeWarn', 'toggle', 'Day-of-week + already-charged-today checks.')
+  html += section('🛡', 'Safety prompts — what asks "are you sure?"',
+    'Should the app double-check with you before risky actions? Turn off any prompt you find annoying. (Recommended to keep all ON until you\'re comfortable.)',
+    advRow('Ask before deleting a payment', 'confirmDeletePayment', 'toggle') +
+    advRow('Extra warning when archiving members with credit or debt', 'confirmRiskyArchive', 'toggle', 'Stops you from accidentally archiving someone who paid in advance.') +
+    advRow('Smart "Charge Everyone" warnings', 'smartChargeWarn', 'toggle', 'Warns if you\'re charging the wrong day-of-week or charging the same group twice today.')
+  );
+
+  // Section 9a: Banner notifications (control which warnings appear)
+  const bannerToggleRow = (label, key, hint) => {
+    // These are at DB.settings (not DB.settings.backend)
+    const v = !!DB.settings[key];
+    const on = !v; // "show" toggle = true means banner enabled (so the dismiss-flag is false)
+    return '<div class="fg" style="margin-bottom:10px"><label style="font-weight:600;color:#444;font-size:0.85rem">' + label + '</label>' +
+      '<label style="position:relative;display:inline-block;width:46px;height:24px"><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="DB.settings[\'' + key + '\']=!this.checked;saveDB();renderAdvanced()" style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;inset:0;background:' + (on ? '#27ae60' : '#ccc') + ';border-radius:24px;transition:0.25s"></span><span style="position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:18px;height:18px;background:#fff;border-radius:50%;transition:0.25s"></span></label>' +
+      (hint ? '<div class="hint" style="font-size:0.78rem;color:#888;margin-top:4px">' + hint + '</div>' : '') +
+    '</div>';
+  };
+  html += section('🔔', 'Banner notifications',
+    'Turn off the yellow/red strips that appear at the top of the app.',
+    bannerToggleRow('Show "save your backup" reminder', 'backupReminderDisabled', 'Auto-hides anyway when cloud sync is active. Toggle off if you don\'t want it ever.') +
+    bannerToggleRow('Show "data check" warnings', 'selfTestDismissed', 'Critical issues always show. This only hides minor/warning ones.')
   );
 
   // Section 9b: Billing model
@@ -6894,13 +6933,13 @@ function renderAdvanced() {
     advRow('Include member photos in backup files', 'exportIncludesPhotos', 'toggle', 'Photos are stored as base64 — turning OFF makes backups dramatically smaller.')
   );
 
-  // Section 16: Custom CSS / JS
-  html += section('💻', 'Custom CSS / JavaScript (power users)',
-    '<strong>⚠ Advanced.</strong> Inject your own CSS or JS. Powerful — use carefully.',
-    advRow('Custom CSS', 'customCSS', 'textarea', 'Overrides any styles. Applied immediately.') +
+  // Section 16: Custom CSS / JS (programmer-only — keep buried)
+  html += section('💻', 'Custom code (programmers only)',
+    '<strong>Skip this section if you\'re not a programmer.</strong> If you know CSS or JavaScript, you can inject your own code here to customize the app deeply. Most people will never touch this.',
+    advRow('Custom CSS code', 'customCSS', 'textarea', 'Add CSS to override any styles. Example: <code>body { font-family: Comic Sans MS; }</code>') +
     '<button class="btn btn-blue btn-sm" onclick="applyCustomCSS()" style="margin-top:6px;margin-bottom:14px">Apply CSS now</button>' +
-    advRow('Custom JavaScript hook', 'customJS', 'textarea', 'Runs once on app load. Has access to DB and all functions. Save to apply (then reload).') +
-    '<div style="background:#fff3cd;padding:10px;border-radius:6px;font-size:0.78rem;color:#856404;margin-top:8px"><strong>⚠ Security:</strong> Custom JS runs with full access. Only paste code you trust.</div>'
+    advRow('Custom JavaScript code', 'customJS', 'textarea', 'Runs once when the app loads. Has full access to your data. Save and reload the app to apply.') +
+    '<div style="background:#fff3cd;padding:10px;border-radius:6px;font-size:0.78rem;color:#856404;margin-top:8px"><strong>⚠ Security warning:</strong> Custom JavaScript can do anything — including delete your data or send it elsewhere. Only paste code you fully understand or trust the source of.</div>'
   );
 
   // Section 17: Usage stats
