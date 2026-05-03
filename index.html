@@ -5653,15 +5653,27 @@ async function _eg_saveCloudSync() {
   if (document.getElementById('tab-advanced').classList.contains('active')) renderAdvanced();
 }
 
-// Hook into saveDB: if auto-sync is on, fire a debounced sync push
-let _eg_syncSaveTimer = null;
+// v28: Hook into saveDB — fire push IMMEDIATELY (not debounced) and queue subsequent saves.
+// This prevents the lost-change bug: with the old 2.5-sec debounce, reloading the page within 2.5 sec
+// would cancel the timer and lose the change. With immediate push + queue, every change is synced ASAP
+// without overlapping requests.
+let _eg_pushPending = false;
 function _eg_scheduleSyncPush() {
   _ensureSettingsSchema();
   const cfg = DB.settings.backend;
   if (cfg.cloudSyncProvider !== 'supabase' || !cfg.syncAutoOnSave || !cfg.syncPassphrase) return;
-  if (_eg_syncSaveTimer) clearTimeout(_eg_syncSaveTimer);
-  // v27: silent — no floating indicator after every save
-  _eg_syncSaveTimer = setTimeout(() => syncNow('push', { silent: true }), 2500);
+  if (_eg_syncInFlight) {
+    // A push is in flight — flag that we need another one when it finishes
+    _eg_pushPending = true;
+    return;
+  }
+  // Fire immediately (silent — no floating indicator)
+  syncNow('push', { silent: true }).then(() => {
+    if (_eg_pushPending) {
+      _eg_pushPending = false;
+      _eg_scheduleSyncPush(); // run again to push the latest state
+    }
+  });
 }
 
 // v24: Webhook — POSTs an event JSON to user-configured URL, fire-and-forget
@@ -7925,6 +7937,32 @@ setTimeout(() => {
 }, 1500);
 // v27: render the header pill on load if cloud sync is already active
 setTimeout(() => { try { if (_isCloudSyncActive()) _eg_updateHeaderSyncPill('ok'); } catch (e) {} }, 100);
+
+// v28: Pull from cloud whenever the tab becomes visible/focused (catches changes from other devices fast)
+let _eg_lastFocusPull = 0;
+function _eg_pullOnFocus() {
+  if (!_isCloudSyncActive()) return;
+  // Throttle: only pull at most once every 5 seconds
+  const now = Date.now();
+  if (now - _eg_lastFocusPull < 5000) return;
+  _eg_lastFocusPull = now;
+  syncNow('auto', { silent: true });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _eg_pullOnFocus(); });
+window.addEventListener('focus', _eg_pullOnFocus);
+
+// v28: When user reloads/closes the page, attempt a final push if there's pending sync.
+// Web Crypto is async so we can't fully encrypt synchronously, but we can WARN if there's pending.
+window.addEventListener('beforeunload', function(ev) {
+  if (_eg_pushPending || _eg_syncInFlight) {
+    // Only warn — can't fully complete async encryption + fetch synchronously.
+    // (Cloud sync usually completes within milliseconds, so this is rare.)
+    if (!_isCloudSyncActive()) return; // already handled by the other beforeunload listener
+    ev.preventDefault();
+    ev.returnValue = 'A cloud sync is still in progress. Wait a second and try again to be safe.';
+    return ev.returnValue;
+  }
+});
 // v24: auto-archive on load (only if user enabled it via threshold > 0)
 setTimeout(() => { try { _runAutoArchive(); } catch (e) { console.warn('Auto-archive error:', e); } }, 1500);
 // v24: Run user's custom JS hook (sandbox-free — they own this code)
