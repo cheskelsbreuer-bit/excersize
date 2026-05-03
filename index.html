@@ -963,10 +963,14 @@ function updateSaveIndicator() {
     }, 1500);
   }
   // Pulse the "Save to File" button to remind the user to create a persistent file backup
+  // v27: skip pulse when cloud sync is active — no need to nag about file backups
   const btn = document.getElementById('save-file-btn');
-  if (btn && _unsavedChanges) {
+  if (btn && _unsavedChanges && typeof _isCloudSyncActive === 'function' && !_isCloudSyncActive()) {
     btn.classList.add('pulse');
     btn.textContent = '💾 Save to File ●';
+  } else if (btn) {
+    btn.classList.remove('pulse');
+    if (btn.textContent && btn.textContent.indexOf('●') >= 0) btn.textContent = '💾 Save to File (Backup)';
   }
 }
 
@@ -5323,6 +5327,18 @@ async function _eg_decrypt(b64, passphrase) {
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct);
   return JSON.parse(new TextDecoder().decode(pt));
 }
+// v27: Helper — is cloud sync active and working?
+function _isCloudSyncActive() {
+  _ensureSettingsSchema();
+  const cfg = DB.settings.backend;
+  if (!cfg) return false;
+  if (cfg.cloudSyncProvider !== 'supabase') return false;
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.syncPassphrase) return false;
+  // Counts as active if synced in last 24 hours OR no errors
+  const recently = cfg.lastSyncAt && (Date.now() - cfg.lastSyncAt) < 24 * 60 * 60 * 1000;
+  return recently && !cfg.lastSyncError;
+}
+
 // v26: Normalize various Supabase URL formats to the bare project URL
 // Handles: https://abc.supabase.co/rest/v1/  →  https://abc.supabase.co
 //          https://supabase.com/dashboard/project/abc  →  https://abc.supabase.co
@@ -5376,10 +5392,14 @@ async function _eg_supabasePull(url, anonKey, userId) {
 
 // The main sync orchestrator — push, pull, or auto (newer wins)
 let _eg_syncInFlight = false;
-async function syncNow(direction) {
+async function syncNow(direction, opts) {
   if (_eg_syncInFlight) return { skipped: 'in-flight' };
   _eg_syncInFlight = true;
-  _eg_setSyncStatus('syncing', 'Syncing…');
+  // v27: silent param skips the floating indicator (used by auto-sync after every save)
+  const silent = !!(opts && opts.silent);
+  if (!silent) _eg_setSyncStatus('syncing', 'Syncing…');
+  // Always update the small header pill if it exists
+  _eg_updateHeaderSyncPill('syncing');
   try {
     _ensureSettingsSchema();
     const cfg = DB.settings.backend;
@@ -5414,16 +5434,45 @@ async function syncNow(direction) {
     cfg.lastSyncDirection = didPush ? 'push' : (didPull ? 'pull' : 'no-change');
     cfg.lastSyncError = '';
     saveDB();
-    _eg_setSyncStatus('ok', didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced (already up-to-date)'));
+    // v27: only show the big floating indicator when NOT silent (i.e., for manual syncs / errors)
+    if (!silent) _eg_setSyncStatus('ok', didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced'));
+    _eg_updateHeaderSyncPill('ok');
     return { ok: true, didPush, didPull, cloudTs, localTs };
   } catch (e) {
     DB.settings.backend.lastSyncError = e.message;
     saveDB();
+    // Errors ALWAYS show — silent or not. Data integrity matters.
     _eg_setSyncStatus('err', '⚠ Sync failed: ' + e.message);
+    _eg_updateHeaderSyncPill('err');
     return { ok: false, error: e.message };
   } finally {
     _eg_syncInFlight = false;
   }
+}
+
+// v27: small persistent ☁ pill in the header — subtle status indicator
+function _eg_updateHeaderSyncPill(state) {
+  let pill = document.getElementById('sync-pill');
+  if (!_isCloudSyncActive() && state !== 'syncing') {
+    // No cloud sync configured → hide the pill entirely
+    if (pill) pill.style.display = 'none';
+    return;
+  }
+  if (!pill) {
+    // Create it once next to save-status
+    const ss = document.getElementById('save-status');
+    if (!ss) return;
+    pill = document.createElement('span');
+    pill.id = 'sync-pill';
+    pill.style.cssText = 'font-size:0.75rem;color:#fff;background:rgba(255,255,255,0.15);padding:4px 10px;border-radius:12px;margin-left:6px;cursor:pointer;transition:background 0.2s';
+    pill.onclick = function() { syncNow('auto'); };
+    pill.title = 'Click to sync now';
+    ss.parentNode.insertBefore(pill, ss.nextSibling);
+  }
+  pill.style.display = '';
+  if (state === 'syncing') { pill.textContent = '☁ Syncing…'; pill.style.background = 'rgba(52,152,219,0.4)'; }
+  else if (state === 'err')  { pill.textContent = '☁ Sync error'; pill.style.background = 'rgba(231,76,60,0.5)'; pill.title = 'Click to retry sync'; }
+  else { pill.textContent = '☁ Synced'; pill.style.background = 'rgba(39,174,96,0.4)'; pill.title = 'Click to sync now'; }
 }
 function _eg_setSyncStatus(level, text) {
   let ind = document.getElementById('sync-status');
@@ -5611,7 +5660,8 @@ function _eg_scheduleSyncPush() {
   const cfg = DB.settings.backend;
   if (cfg.cloudSyncProvider !== 'supabase' || !cfg.syncAutoOnSave || !cfg.syncPassphrase) return;
   if (_eg_syncSaveTimer) clearTimeout(_eg_syncSaveTimer);
-  _eg_syncSaveTimer = setTimeout(() => syncNow('push'), 2500);
+  // v27: silent — no floating indicator after every save
+  _eg_syncSaveTimer = setTimeout(() => syncNow('push', { silent: true }), 2500);
 }
 
 // v24: Webhook — POSTs an event JSON to user-configured URL, fire-and-forget
@@ -7863,12 +7913,18 @@ setTimeout(() => {
   try {
     const cfg = DB.settings.backend;
     if (cfg && cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase) {
-      syncNow('auto');
+      // v27: initial pull is silent (no floating indicator); errors still show
+      syncNow('auto', { silent: true });
       const min = cfg.syncIntervalMin || 5;
-      if (min > 0) setInterval(() => syncNow('auto'), min * 60 * 1000);
+      if (min > 0) setInterval(() => syncNow('auto', { silent: true }), min * 60 * 1000);
+    } else {
+      // No cloud sync configured — hide the header pill
+      _eg_updateHeaderSyncPill();
     }
   } catch (e) { console.warn('Cloud sync init error:', e); }
 }, 1500);
+// v27: render the header pill on load if cloud sync is already active
+setTimeout(() => { try { if (_isCloudSyncActive()) _eg_updateHeaderSyncPill('ok'); } catch (e) {} }, 100);
 // v24: auto-archive on load (only if user enabled it via threshold > 0)
 setTimeout(() => { try { _runAutoArchive(); } catch (e) { console.warn('Auto-archive error:', e); } }, 1500);
 // v24: Run user's custom JS hook (sandbox-free — they own this code)
@@ -7918,8 +7974,9 @@ console.log('App loaded with ' + DB.members.length + ' members, ' + DB.payments.
 tryRestoreFromIDB();
 
 // Warn user before closing tab if they have unsaved changes (not backed up to file)
+// v27: skip warning when cloud sync is active — cloud IS the backup
 window.addEventListener('beforeunload', function(ev) {
-  if (_unsavedChanges) {
+  if (_unsavedChanges && !_isCloudSyncActive()) {
     const msg = 'You have changes that have not been saved to a file. Click Save to File first to be safe.';
     ev.returnValue = msg;
     return msg;
