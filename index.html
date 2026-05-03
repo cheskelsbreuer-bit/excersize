@@ -945,6 +945,8 @@ function saveDB() {
     idbSet(STORAGE_KEY, DB).catch(e => console.warn('IDB save failed:', e));
     _unsavedChanges = true;
     updateSaveIndicator();
+    // v26: schedule cloud sync push (debounced) if enabled
+    if (typeof _eg_scheduleSyncPush === 'function') _eg_scheduleSyncPush();
   } catch (e) {
     console.warn('Save failed:', e);
     alert('⚠ Could not save. Error: ' + e.message);
@@ -5248,7 +5250,258 @@ function _ensureSettingsSchema() {
   if (typeof b.prepayMode !== 'boolean') b.prepayMode = false;
   // v25 — FormSubmit (sends feedback email without leaving the app)
   if (typeof b.feedbackUseFormSubmit !== 'boolean') b.feedbackUseFormSubmit = false;
+  // v26 — Cloud sync (Supabase, passphrase-encrypted)
+  if (typeof b.syncPassphrase !== 'string') b.syncPassphrase = '';
+  if (typeof b.syncAutoOnSave !== 'boolean') b.syncAutoOnSave = true;
+  if (typeof b.syncIntervalMin !== 'number') b.syncIntervalMin = 5;
+  if (typeof b.lastSyncAt !== 'number') b.lastSyncAt = 0;
+  if (typeof b.lastSyncDirection !== 'string') b.lastSyncDirection = '';
+  if (typeof b.lastSyncError !== 'string') b.lastSyncError = '';
   _syncDerivedLists();
+}
+
+/* ============ v26: CLOUD SYNC (Supabase + end-to-end encryption) ============ */
+// Encryption helpers: AES-GCM with PBKDF2-derived key from user passphrase.
+// All app data is encrypted CLIENT-SIDE before going to Supabase.
+// Supabase admins / anyone scanning the DB sees only opaque ciphertext.
+async function _eg_deriveKey(passphrase, salt) {
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt, iterations: 100000, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+async function _eg_encrypt(obj, passphrase) {
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await _eg_deriveKey(passphrase, salt);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, enc.encode(JSON.stringify(obj)));
+  // Pack: salt (16) + iv (12) + ciphertext, base64-encoded
+  const buf = new Uint8Array(salt.length + iv.length + ct.byteLength);
+  buf.set(salt, 0); buf.set(iv, salt.length); buf.set(new Uint8Array(ct), salt.length + iv.length);
+  let bin = ''; for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+  return btoa(bin);
+}
+async function _eg_decrypt(b64, passphrase) {
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  const salt = buf.slice(0, 16);
+  const iv = buf.slice(16, 28);
+  const ct = buf.slice(28);
+  const key = await _eg_deriveKey(passphrase, salt);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct);
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+// Stable user ID derived from passphrase — same passphrase = same row
+async function _eg_userIdFromPassphrase(passphrase) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('exercise-app:v1:' + passphrase));
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Supabase REST helpers (no SDK, just fetch)
+async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
+  const resp = await fetch(url + '/rest/v1/app_data?on_conflict=user_id', {
+    method: 'POST',
+    headers: {
+      'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=minimal'
+    },
+    body: JSON.stringify({ user_id: userId, data: encryptedData, updated_at: new Date().toISOString(), device_label: _deviceLabel() })
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error('Push failed (' + resp.status + '): ' + txt.slice(0, 200));
+  }
+  return true;
+}
+async function _eg_supabasePull(url, anonKey, userId) {
+  const resp = await fetch(url + '/rest/v1/app_data?user_id=eq.' + encodeURIComponent(userId) + '&select=data,updated_at,device_label', {
+    headers: { 'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey }
+  });
+  if (!resp.ok) throw new Error('Pull failed (' + resp.status + ')');
+  const arr = await resp.json();
+  return arr.length ? arr[0] : null;
+}
+
+// The main sync orchestrator — push, pull, or auto (newer wins)
+let _eg_syncInFlight = false;
+async function syncNow(direction) {
+  if (_eg_syncInFlight) return { skipped: 'in-flight' };
+  _eg_syncInFlight = true;
+  _eg_setSyncStatus('syncing', 'Syncing…');
+  try {
+    _ensureSettingsSchema();
+    const cfg = DB.settings.backend;
+    if (cfg.cloudSyncProvider !== 'supabase') throw new Error('Cloud sync provider is not Supabase. Set it in Advanced → Cloud sync.');
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('Supabase URL and anon key are required.');
+    if (!cfg.syncPassphrase || cfg.syncPassphrase.length < 8) throw new Error('Set a sync passphrase (8+ chars) in Advanced → Cloud sync.');
+    const userId = await _eg_userIdFromPassphrase(cfg.syncPassphrase);
+    const cloud = await _eg_supabasePull(cfg.supabaseUrl, cfg.supabaseAnonKey, userId);
+    const cloudTs = cloud ? new Date(cloud.updated_at).getTime() : 0;
+    const localTs = DB._savedAt || 0;
+
+    let didPush = false, didPull = false;
+    if (direction === 'push' || (direction === 'auto' && (!cloud || localTs > cloudTs))) {
+      const encrypted = await _eg_encrypt(DB, cfg.syncPassphrase);
+      await _eg_supabasePush(cfg.supabaseUrl, cfg.supabaseAnonKey, userId, encrypted);
+      didPush = true;
+    } else if (direction === 'pull' || (direction === 'auto' && cloud && cloudTs > localTs)) {
+      const decrypted = await _eg_decrypt(cloud.data, cfg.syncPassphrase);
+      // Preserve a few device-only fields from local
+      decrypted._savedAt = cloudTs;
+      DB = decrypted;
+      // Persist locally without re-triggering sync
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
+      idbSet(STORAGE_KEY, DB).catch(() => {});
+      didPull = true;
+      reRenderAll();
+    }
+    cfg.lastSyncAt = Date.now();
+    cfg.lastSyncDirection = didPush ? 'push' : (didPull ? 'pull' : 'no-change');
+    cfg.lastSyncError = '';
+    saveDB();
+    _eg_setSyncStatus('ok', didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced (already up-to-date)'));
+    return { ok: true, didPush, didPull, cloudTs, localTs };
+  } catch (e) {
+    DB.settings.backend.lastSyncError = e.message;
+    saveDB();
+    _eg_setSyncStatus('err', '⚠ Sync failed: ' + e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    _eg_syncInFlight = false;
+  }
+}
+function _eg_setSyncStatus(level, text) {
+  let ind = document.getElementById('sync-status');
+  if (!ind) {
+    ind = document.createElement('div');
+    ind.id = 'sync-status';
+    ind.style.cssText = 'position:fixed;bottom:20px;left:20px;padding:8px 14px;border-radius:20px;font-family:Arial;font-size:0.82rem;font-weight:600;z-index:99;box-shadow:0 2px 10px rgba(0,0,0,0.2);transition:opacity 0.3s';
+    document.body.appendChild(ind);
+  }
+  const colors = {
+    syncing: { bg: '#3498db', fg: '#fff' },
+    ok: { bg: '#27ae60', fg: '#fff' },
+    err: { bg: '#e74c3c', fg: '#fff' },
+    idle: { bg: '#95a5a6', fg: '#fff' }
+  };
+  const c = colors[level] || colors.idle;
+  ind.style.background = c.bg;
+  ind.style.color = c.fg;
+  ind.textContent = text;
+  ind.style.opacity = '1';
+  if (level === 'ok') {
+    setTimeout(() => { if (ind && ind.style) { ind.style.opacity = '0.5'; } }, 3000);
+  }
+}
+
+// Open the Setup Cloud Sync wizard
+function openCloudSyncWizard() {
+  const cfg = DB.settings.backend;
+  document.getElementById('ov-edit-body').innerHTML =
+    '<div class="mh"><h2>☁ Set up Cloud Sync</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
+    '<p style="font-size:0.88rem;color:#444;margin-bottom:10px">Sync your data across all your devices using <strong>Supabase</strong> (free tier) with end-to-end encryption. Your data is encrypted on YOUR device before being uploaded — nobody else can read it, not even Supabase.</p>' +
+    '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">📝 Step 1: Create a free Supabase account</summary>' +
+      '<ol style="font-size:0.88rem;line-height:1.7;margin:6px 0 12px 24px">' +
+        '<li>Go to <a href="https://supabase.com" target="_blank" style="color:#2d6a9f;font-weight:700">supabase.com</a> → Sign up (it\'s free)</li>' +
+        '<li>Click <strong>"New project"</strong></li>' +
+        '<li>Name it anything (e.g. "exercise-group"). Pick a strong DB password (you won\'t need it later — just save it somewhere)</li>' +
+        '<li>Wait ~1 minute for the project to provision</li>' +
+      '</ol>' +
+    '</details>' +
+    '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">⚙ Step 2: Run the SQL script (one-time setup)</summary>' +
+      '<p style="font-size:0.85rem;color:#555;margin:6px 0">In your Supabase dashboard → click <strong>SQL Editor</strong> (left sidebar) → <strong>New query</strong> → paste this script and click <strong>Run</strong>:</p>' +
+      '<textarea id="sync-sql" readonly style="width:100%;height:150px;font-family:monospace;font-size:0.78rem;padding:10px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff" onclick="this.select()">-- Exercise Group Cloud Sync setup\n-- Run this once in Supabase SQL Editor\n\nCREATE TABLE IF NOT EXISTS app_data (\n  user_id TEXT PRIMARY KEY,\n  data TEXT NOT NULL,\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  device_label TEXT\n);\n\n-- Allow anonymous read/write (data is end-to-end encrypted, so this is safe)\nALTER TABLE app_data ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY "Allow anon read"  ON app_data FOR SELECT TO anon USING (true);\nCREATE POLICY "Allow anon write" ON app_data FOR INSERT TO anon WITH CHECK (true);\nCREATE POLICY "Allow anon update" ON app_data FOR UPDATE TO anon USING (true) WITH CHECK (true);</textarea>' +
+      '<button class="btn btn-blue btn-sm" onclick="navigator.clipboard.writeText(document.getElementById(\'sync-sql\').value);alert(\'📋 SQL copied to clipboard\')" style="margin-top:6px">📋 Copy SQL</button>' +
+    '</details>' +
+    '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔑 Step 3: Paste your project credentials</summary>' +
+      '<p style="font-size:0.85rem;color:#555;margin:6px 0">In your Supabase dashboard → <strong>Project Settings</strong> (gear icon, bottom of left sidebar) → <strong>API</strong> → copy these two values:</p>' +
+      '<div class="fg" style="margin-bottom:8px"><label>Project URL</label><input type="text" id="sync-url" value="' + _escAttr(cfg.supabaseUrl || '') + '" placeholder="https://xxxxxxxxxxxx.supabase.co" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
+      '<div class="fg" style="margin-bottom:8px"><label>anon public key (long JWT)</label><input type="password" id="sync-key" value="' + _escAttr(cfg.supabaseAnonKey || '') + '" placeholder="eyJhbGciOi..." style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
+    '</details>' +
+    '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔐 Step 4: Choose a sync passphrase</summary>' +
+      '<p style="font-size:0.85rem;color:#555;margin:6px 0">This is the password that <strong>encrypts your data</strong>. You\'ll need to enter the SAME passphrase on every device. <strong>If you lose it, your data is unrecoverable</strong> — the encryption is real.</p>' +
+      '<div class="fg"><label>Sync passphrase (8+ characters)</label><input type="password" id="sync-pass" value="' + _escAttr(cfg.syncPassphrase || '') + '" placeholder="Pick something memorable but strong" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.95rem"></div>' +
+      '<div style="background:#fff3cd;padding:10px;border-radius:6px;font-size:0.78rem;color:#856404;margin-top:8px">⚠ <strong>WRITE THIS DOWN.</strong> If you forget the passphrase, all cloud-synced data becomes permanently inaccessible.</div>' +
+    '</details>' +
+    '<div class="factions" style="margin-top:14px">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Cancel</button>' +
+      '<button class="btn btn-orange" onclick="_eg_testCloudSync()">🧪 Test connection</button>' +
+      '<button class="btn btn-green" onclick="_eg_saveCloudSync()">💾 Save &amp; activate sync</button>' +
+    '</div>';
+  openOv('ov-edit');
+}
+
+async function _eg_testCloudSync() {
+  const url = (document.getElementById('sync-url').value || '').trim().replace(/\/$/, '');
+  const key = (document.getElementById('sync-key').value || '').trim();
+  const pass = (document.getElementById('sync-pass').value || '').trim();
+  if (!url || !key || !pass) { alert('Fill in all three: URL, anon key, passphrase.'); return; }
+  if (pass.length < 8) { alert('Passphrase must be at least 8 characters.'); return; }
+  try {
+    const userId = await _eg_userIdFromPassphrase(pass);
+    // Try a select on the table
+    const r = await fetch(url + '/rest/v1/app_data?user_id=eq.' + encodeURIComponent(userId) + '&select=user_id', {
+      headers: { 'apikey': key, 'Authorization': 'Bearer ' + key }
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      alert('❌ Connection failed (' + r.status + '): ' + txt.slice(0, 300) + '\n\nMost common cause: you haven\'t run the SQL script yet (Step 2). Or the URL/key is wrong.');
+      return;
+    }
+    const arr = await r.json();
+    if (arr.length === 0) {
+      alert('✅ Connection works!\n\nNo data in cloud yet for this passphrase. Click "Save & activate sync" to push your current data up.');
+    } else {
+      alert('✅ Connection works! Found existing cloud data for this passphrase (last updated by another device). Click "Save & activate sync" — the cloud version will be pulled down.');
+    }
+  } catch (e) {
+    alert('❌ Connection error: ' + e.message);
+  }
+}
+
+async function _eg_saveCloudSync() {
+  const url = (document.getElementById('sync-url').value || '').trim().replace(/\/$/, '');
+  const key = (document.getElementById('sync-key').value || '').trim();
+  const pass = (document.getElementById('sync-pass').value || '').trim();
+  if (!url || !key || !pass) { alert('Fill in all three: URL, anon key, passphrase.'); return; }
+  if (pass.length < 8) { alert('Passphrase must be at least 8 characters.'); return; }
+  if (!confirm('Activate cloud sync now?\n\nFirst sync will compare local data with cloud and use whichever is newer.')) return;
+  _ensureSettingsSchema();
+  DB.settings.backend.supabaseUrl = url;
+  DB.settings.backend.supabaseAnonKey = key;
+  DB.settings.backend.syncPassphrase = pass;
+  DB.settings.backend.cloudSyncProvider = 'supabase';
+  saveDB();
+  closeOv('ov-edit');
+  // Trigger first sync
+  const result = await syncNow('auto');
+  if (result.ok) {
+    alert('☁ Cloud sync activated!\n\n' +
+      (result.didPush ? 'Your local data was pushed to the cloud. Other devices using the same passphrase will now sync.' :
+       result.didPull ? 'Newer data was pulled FROM the cloud. Your local data has been replaced.' :
+       'Cloud and local were already in sync.') +
+      '\n\nFrom now on: every save also syncs to the cloud (toggle in Advanced).');
+  }
+  // Refresh Advanced view if open
+  if (document.getElementById('tab-advanced').classList.contains('active')) renderAdvanced();
+}
+
+// Hook into saveDB: if auto-sync is on, fire a debounced sync push
+let _eg_syncSaveTimer = null;
+function _eg_scheduleSyncPush() {
+  _ensureSettingsSchema();
+  const cfg = DB.settings.backend;
+  if (cfg.cloudSyncProvider !== 'supabase' || !cfg.syncAutoOnSave || !cfg.syncPassphrase) return;
+  if (_eg_syncSaveTimer) clearTimeout(_eg_syncSaveTimer);
+  _eg_syncSaveTimer = setTimeout(() => syncNow('push'), 2500);
 }
 
 // v24: Webhook — POSTs an event JSON to user-configured URL, fire-and-forget
@@ -6500,13 +6753,36 @@ function renderAdvanced() {
     labelRow('"Combos" (plural)', 'combos')
   );
 
-  // Section 6: Cloud sync (multi-device)
-  html += section('☁️', 'Cloud sync (multi-device, multi-user)',
-    '<strong style="color:#d97706">⚠ Not yet wired.</strong> Save your credentials here now — when we activate it (next major build), it\'s a one-click switch.',
-    advRow('Provider', 'cloudSyncProvider', 'select', null, [{v:'none', l:'None — local only (current)'}, {v:'supabase', l:'Supabase (free tier — recommended)'}, {v:'firebase', l:'Firebase (free tier)'}]) +
-    advRow('Supabase URL', 'supabaseUrl', 'text', 'e.g. https://xxxxx.supabase.co · Get this from supabase.com Settings → API.') +
-    advRow('Supabase anon key', 'supabaseAnonKey', 'password', 'Public-safe key. Found in Settings → API in your Supabase dashboard.') +
-    advRow('Firebase config (paste full JSON)', 'firebaseConfig', 'textarea', 'The {apiKey, authDomain, ...} object from Firebase console.')
+  // Section 6: Cloud sync — REAL implementation
+  const syncOn = bk.cloudSyncProvider === 'supabase' && bk.supabaseUrl && bk.syncPassphrase;
+  const lastSync = bk.lastSyncAt ? new Date(bk.lastSyncAt).toLocaleString() : 'never';
+  const syncErr = bk.lastSyncError ? '<div style="background:#fdecea;border-left:4px solid #c0392b;padding:8px 10px;border-radius:6px;font-size:0.8rem;color:#721c24;margin-bottom:8px">⚠ Last sync error: ' + esc(bk.lastSyncError) + '</div>' : '';
+  html += section('☁️', 'Cloud sync — multi-device (Supabase + end-to-end encrypted)',
+    'Sync your data across all your devices. Data is encrypted on YOUR device first — Supabase only sees ciphertext.',
+    syncErr +
+    '<div style="background:' + (syncOn ? '#e8f5e9' : '#fff8e1') + ';border-left:4px solid ' + (syncOn ? '#27ae60' : '#f0b400') + ';padding:12px;border-radius:8px;margin-bottom:12px">' +
+      '<div style="font-weight:700;color:' + (syncOn ? '#155724' : '#856404') + '">' + (syncOn ? '☁ Cloud sync is ACTIVE' : '☁ Cloud sync is OFF') + '</div>' +
+      '<div style="font-size:0.85rem;color:#555;margin-top:4px">' +
+        (syncOn ? 'Last sync: ' + lastSync + ' (' + (bk.lastSyncDirection || 'no-change') + ')' : 'Click "Set up cloud sync" to enable. About 5 minutes to set up. Free.') +
+      '</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">' +
+      '<button class="btn btn-blue" onclick="openCloudSyncWizard()">' + (syncOn ? '⚙ Reconfigure' : '☁ Set up cloud sync') + '</button>' +
+      (syncOn ? '<button class="btn btn-green" onclick="syncNow(\'auto\').then(()=>renderAdvanced())">↻ Sync now</button>' : '') +
+      (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PUSH — overwrite cloud with local data?\'))syncNow(\'push\').then(()=>renderAdvanced())">⬆ Force push</button>' : '') +
+      (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PULL — overwrite local data with cloud?\\n\\nLocal changes since last sync will be LOST.\'))syncNow(\'pull\').then(()=>renderAdvanced())">⬇ Force pull</button>' : '') +
+      (syncOn ? '<button class="btn btn-red" onclick="if(confirm(\'Disconnect cloud sync? Your data stays on this device. Re-connect any time.\')){DB.settings.backend.cloudSyncProvider=\'none\';saveDB();renderAdvanced();}">🔌 Disconnect</button>' : '') +
+    '</div>' +
+    advRow('Auto-sync after every save', 'syncAutoOnSave', 'toggle', 'When ON, every change pushes to cloud (debounced ~2.5 sec).') +
+    advRow('Auto-pull interval (minutes)', 'syncIntervalMin', 'number', 'Periodically check for changes from other devices. 0 = disabled. Default 5 min.') +
+    '<details style="margin-top:8px"><summary style="cursor:pointer;color:#888;font-size:0.85rem">Show raw credentials</summary>' +
+      '<div style="padding-top:8px">' +
+        advRow('Provider', 'cloudSyncProvider', 'select', null, [{v:'none', l:'None'}, {v:'supabase', l:'Supabase'}]) +
+        advRow('Supabase URL', 'supabaseUrl', 'text') +
+        advRow('Supabase anon key', 'supabaseAnonKey', 'password') +
+        advRow('Sync passphrase (encryption key)', 'syncPassphrase', 'password', '⚠ If lost, cloud data becomes unreadable forever.') +
+      '</div>' +
+    '</details>'
   );
 
   // Section 7: Integrations / webhooks
@@ -7399,6 +7675,17 @@ applyTheme();
 applyAppLevel();
 applyCustomCSS();
 applyAdvancedSettings();
+// v26: Cloud sync — pull on load + start interval if configured
+setTimeout(() => {
+  try {
+    const cfg = DB.settings.backend;
+    if (cfg && cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase) {
+      syncNow('auto');
+      const min = cfg.syncIntervalMin || 5;
+      if (min > 0) setInterval(() => syncNow('auto'), min * 60 * 1000);
+    }
+  } catch (e) { console.warn('Cloud sync init error:', e); }
+}, 1500);
 // v24: auto-archive on load (only if user enabled it via threshold > 0)
 setTimeout(() => { try { _runAutoArchive(); } catch (e) { console.warn('Auto-archive error:', e); } }, 1500);
 // v24: Run user's custom JS hook (sandbox-free — they own this code)
