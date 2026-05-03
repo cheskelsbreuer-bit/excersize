@@ -346,6 +346,30 @@ body.theme-dark nav#mainnav button.active { background: #444; color: #fff; }
 .processing-box { background: #f5f9ff; padding: 20px; text-align: center; border-radius: 10px; color: #2d6a9f; font-size: 0.9rem; }
 .error-box { background: #fdecea; border-left: 4px solid #c0392b; padding: 12px; border-radius: 6px; color: #6b2118; font-size: 0.85rem; margin: 10px 0; }
 
+/* ===== v24: Advanced UI customization classes ===== */
+body.density-compact td { padding: 5px 8px; font-size: 0.82rem; }
+body.density-compact thead th { padding: 7px 8px; }
+body.density-compact .sc { padding: 8px 12px; }
+body.density-compact .sc .v { font-size: 1.4rem; }
+body.density-compact .gcard { padding: 10px; }
+body.density-compact .tab { padding: 12px 16px; }
+body.density-spacious td { padding: 13px 16px; font-size: 0.92rem; }
+body.density-spacious thead th { padding: 14px 16px; }
+body.density-spacious .sc { padding: 18px 22px; }
+body.density-spacious .sc .v { font-size: 2rem; }
+body.density-spacious .gcard { padding: 22px; }
+body.density-spacious .tab { padding: 24px 28px; }
+body.reduce-anim *, body.reduce-anim *::before, body.reduce-anim *::after { animation-duration: 0.01s !important; transition-duration: 0.01s !important; }
+body.high-contrast { background: #fff; }
+body.high-contrast .sc, body.high-contrast .gcard, body.high-contrast table, body.high-contrast .modal { border: 2px solid #1a3a5c; }
+body.high-contrast tbody tr td { border-bottom: 1px solid #888; }
+body.high-contrast .btn { border: 2px solid currentColor; }
+body.large-text { font-size: 1.08rem; }
+body.large-text td, body.large-text .btn, body.large-text input, body.large-text select, body.large-text textarea { font-size: 1em; }
+body.large-text h1 { font-size: 1.6rem; }
+body.large-text h2 { font-size: 1.25rem; }
+body.large-text h3 { font-size: 1.1rem; }
+
 /* ===== v24: Tour redesigned as a slideshow — ONE persistent card, content cross-fades ===== */
 @keyframes confetti-fall {
   0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
@@ -400,6 +424,11 @@ body.theme-dark nav#mainnav button.active { background: #444; color: #fff; }
 #tour-fab { position: fixed; bottom: 20px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: linear-gradient(135deg, #2d6a9f, #4a8c4a); color: #fff; border: none; font-size: 1.4rem; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.25); z-index: 100; display: flex; align-items: center; justify-content: center; transition: transform 0.15s, box-shadow 0.15s; }
 #tour-fab:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
 .confetti-piece { position: fixed; width: 10px; height: 14px; top: -20px; pointer-events: none; z-index: 9100; animation: confetti-fall 2.5s linear forwards; }
+@keyframes tour-resume-pulse {
+  0%, 100% { box-shadow: 0 6px 20px rgba(45,106,159,0.4); }
+  50% { box-shadow: 0 6px 30px rgba(45,106,159,0.7); }
+}
+#tour-resume:hover { transform: scale(1.05); }
 @media (max-width: 480px) { #tour-pop .tour-hero { padding: 20px 16px; } #tour-pop .tour-hero-emoji { font-size: 3.5rem; } #tour-pop h3 { font-size: 1.15rem; } }
 @media print { #tour-pop, #tour-fab, #tour-backdrop, .confetti-piece { display: none !important; } }
 
@@ -518,6 +547,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   <button data-tab="archived" class="corner-btn">🗃 Former</button>
   <button data-tab="lookup" class="corner-btn">🔍 Lookup</button>
   <button data-tab="settings" class="corner-btn edit-only">⚙ Settings</button>
+  <button data-tab="advanced" class="corner-btn edit-only" data-min-level="pro">🔧 Advanced</button>
 </nav>
 
 <!-- DASHBOARD -->
@@ -536,14 +566,14 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
         <tbody id="ds-birthdays"></tbody>
       </table></div>
     </div>
-    <div>
+    <div id="ds-owe-wrap">
       <div class="shead">⚠ Members Who Owe Money</div>
       <div class="tw"><table>
         <thead><tr><th>Name</th><th>Group</th><th>Owes</th><th>Last Payment</th><th>Action</th></tr></thead>
         <tbody id="ds-owe"></tbody>
       </table></div>
     </div>
-    <div>
+    <div id="ds-recent-wrap">
       <div class="shead">💰 Recent Payments</div>
       <div class="tw"><table>
         <thead><tr><th>Name</th><th>Date</th><th>Amount</th><th>Group</th><th>Balance After</th></tr></thead>
@@ -681,6 +711,12 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 <div id="tab-settings" class="tab">
   <div class="notice">⚙ Configure your app. Most changes save instantly.</div>
   <div id="settings-content"></div>
+</div>
+
+<!-- ADVANCED / OWNER PANEL (v24) -->
+<div id="tab-advanced" class="tab">
+  <div class="notice" style="background:linear-gradient(135deg,#fff3cd,#ffe9b3);border-left:4px solid #d97706;color:#856404"><strong>🔧 Advanced — Owner Settings</strong> · This page is for power users. Control every detail of the app, customize behavior, and prepare for cloud sync. Changes here apply immediately across the whole app.</div>
+  <div id="advanced-content"></div>
 </div>
 
 
@@ -1184,7 +1220,7 @@ function exportCSV() {
     else if (!m.active) status = 'Inactive';
     else if (isCurrentlyPaused(m.name)) status = 'Paused';
     return [m.name, m.group, m.phone || '', m.startDate || '', m.endDate || '',
-            m.balance, m.totalClasses, (m.totalPaid || 0).toFixed(0), status]
+            m.balance, m.totalClasses, (m.totalPaid || 0).toFixed(2), status]
       .map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',');
   }).join('\n');
   const csv = header + rows;
@@ -1216,7 +1252,7 @@ function sendSMSReminder(name) {
   if (!m.phone) { alert('No phone number on file for ' + name); return; }
   const amount = m.balance > 0 ? m.balance : 0;
   if (amount <= 0) { alert(name + ' does not owe money.'); return; }
-  const msg = 'Hi ' + m.name.split(' ')[0] + '! Just a friendly reminder that your balance for exercise class is $' + amount.toFixed(0) + '. Thanks!';
+  const msg = 'Hi ' + m.name.split(' ')[0] + '! Just a friendly reminder that your balance for exercise class is $' + amount.toFixed(2) + '. Thanks!';
   // Clean phone number — remove spaces, dashes, parens
   const phone = m.phone.replace(/[^\d+]/g, '');
   // sms: URI opens native messaging app on phones; on desktop it does nothing useful
@@ -1361,8 +1397,8 @@ function isCurrentlyPaused(name) {
 function balHTML(v) {
   if (v === null || v === undefined) return '<span class="bal bal-z">—</span>';
   const n = parseFloat(v);
-  if (n < 0) return '<span class="bal bal-c">−$' + Math.abs(n).toFixed(0) + '</span>';
-  if (n > 0) return '<span class="bal bal-o">+$' + n.toFixed(0) + '</span>';
+  if (n < 0) return '<span class="bal bal-c">−' + _money(Math.abs(n)) + '</span>';
+  if (n > 0) return '<span class="bal bal-o">+' + _money(n) + '</span>';
   return '<span class="bal bal-z">$0</span>';
 }
 function statusBadge(m) {
@@ -1473,6 +1509,7 @@ function showTab(id) {
   if (id === 'log') renderActivityLog();
   if (id === 'settings') renderSettings();
   if (id === 'reports') renderReports();
+  if (id === 'advanced') renderAdvanced();
 }
 document.querySelectorAll('#mainnav button').forEach(btn => {
   btn.addEventListener('click', function() { showTab(this.getAttribute('data-tab')); });
@@ -1501,13 +1538,13 @@ function initDashboard() {
   const rev = activeMembers.reduce((s, m) => s + (m.totalPaid || 0), 0);
   const totalOwed = activeMembers.filter(m => m.balance > 0).reduce((s, m) => s + m.balance, 0);
 
-  document.getElementById('hdr-sub').textContent = activeMembers.length + ' active members · $' + totalOwed.toFixed(0) + ' outstanding';
+  document.getElementById('hdr-sub').textContent = activeMembers.length + ' active members · ' + _money(totalOwed) + ' outstanding';
 
   document.getElementById('ds-stats').innerHTML =
     '<div class="sc g"><div class="v">' + activeMembers.length + '</div><div class="l">Active Members</div></div>' +
     '<div class="sc r"><div class="v">' + owe + '</div><div class="l">Owe Money</div></div>' +
     '<div class="sc g"><div class="v">' + credit + '</div><div class="l">Have Credit</div></div>' +
-    '<div class="sc r"><div class="v">$' + totalOwed.toFixed(0) + '</div><div class="l">Total Outstanding</div></div>' +
+    '<div class="sc r"><div class="v">$' + totalOwed.toFixed(2) + '</div><div class="l">Total Outstanding</div></div>' +
     '<div class="sc"><div class="v">$' + rev.toLocaleString() + '</div><div class="l">Total Collected</div></div>' +
     '<div class="sc o"><div class="v">' + paused + '</div><div class="l">Paused (hidden)</div></div>';
 
@@ -1520,7 +1557,7 @@ function initDashboard() {
           '<td><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + m.name + '</a></td>' +
           '<td>' + m.group + '</td>' +
           '<td>' + balHTML(m.balance) + '</td>' +
-          '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(0) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
+          '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
             (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>') +
             (m.phone ? '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')" title="Send reminder SMS">📱</button></span>' : '') +
@@ -1536,7 +1573,7 @@ function initDashboard() {
         '<tr>' +
         '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + p.name + '</a></td>' +
         '<td>' + p.date + '</td>' +
-        '<td><strong>$' + p.paid.toFixed(0) + '</strong></td>' +
+        '<td><strong>$' + p.paid.toFixed(2) + '</strong></td>' +
         '<td>' + p.group + '</td>' +
         '<td>' + balHTML(p.balance) + '</td>' +
         '</tr>'
@@ -1611,8 +1648,8 @@ function mRowHTML(m) {
     '<td style="font-size:0.82rem">' + m.group + '</td>' +
     '<td>' + balHTML(m.balance) + '</td>' +
     '<td>' + m.totalClasses + '</td>' +
-    '<td>$' + (m.totalPaid || 0).toFixed(0) + '</td>' +
-    '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(0) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
+    '<td>$' + (m.totalPaid || 0).toFixed(2) + '</td>' +
+    '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
     '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
       '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>' +
       (editMode
@@ -1670,7 +1707,7 @@ function pRowHTML(p) {
   return '<tr>' +
     '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + p.name + '</a></td>' +
     '<td>' + p.date + '</td>' +
-    '<td>' + (p.paid !== null ? '<strong>$' + p.paid.toFixed(0) + '</strong>' : '<span class="badge b-pau">⚠ Missing</span>') + '</td>' +
+    '<td>' + (p.paid !== null ? '<strong>$' + p.paid.toFixed(2) + '</strong>' : '<span class="badge b-pau">⚠ Missing</span>') + '</td>' +
     '<td>' + p.group + '</td>' +
     '<td>' + balHTML(p.balance) + '</td>' +
     (editMode ? '<td class="edit-only"><button class="btn btn-red btn-sm" onclick="deletePayment(' + ri + ')">✕</button></td>' : '<td class="edit-only"></td>') +
@@ -1812,7 +1849,7 @@ function renderGroups() {
           '<div class="gst"><strong>' + _money(truly.reduce((s, m) => s + (m.totalPaid || 0), 0)) + '</strong><span>Collected</span></div>' +
         '</div>' +
       '</div>' +
-      (editMode ? '<button class="btn btn-orange btn-sm" style="margin-top:10px;width:100%" onclick="openChargeGroup(\'' + esc(gName) + '\')">💳 Charge Everyone</button>' : '') +
+      (editMode ? _groupActionButton(gName, 'card') : '') +
     '</div>';
   }).join('');
   document.getElementById('gcards').innerHTML = cards;
@@ -1826,7 +1863,7 @@ function openGroupDetail(gName) {
   const headerBtn = document.getElementById('gd-charge-btn');
   if (headerBtn) {
     let buttons = '';
-    if (editMode) buttons += '<button class="btn btn-orange" onclick="openChargeGroup(\'' + gName + '\')">💳 Charge Everyone</button>';
+    if (editMode) buttons += _groupActionButton(gName, 'header');
     if (editMode && _featureOn('attendance')) buttons += ' <button class="btn btn-blue" onclick="openAttendance(\'' + gName + '\')">📅 Take Attendance</button>';
     headerBtn.innerHTML = buttons;
   }
@@ -1925,8 +1962,8 @@ function renderGroupDetail() {
           '<td><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + m.name + '</a></td>' +
           '<td>' + balHTML(m.balance) + '</td>' +
           '<td>' + m.totalClasses + '</td>' +
-          '<td>$' + (m.totalPaid || 0).toFixed(0) + '</td>' +
-          '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(0) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
+          '<td>$' + (m.totalPaid || 0).toFixed(2) + '</td>' +
+          '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px">' +
             '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>' +
             (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '') +
@@ -1940,6 +1977,95 @@ function backToGroups() {
 }
 
 /* ============ CHARGE EVERYONE IN A GROUP ============ */
+// v25: Show the right group-action button(s) based on prepay mode setting
+function _groupActionButton(gName, location) {
+  const prepay = !!(DB.settings.backend && DB.settings.backend.prepayMode);
+  const isCard = location === 'card';
+  const baseStyle = isCard ? 'style="margin-top:10px;width:100%"' : '';
+  if (!prepay) {
+    return '<button class="btn btn-orange btn-sm" ' + baseStyle + ' onclick="openChargeGroup(\'' + esc(gName) + '\')">💳 Charge Everyone</button>';
+  }
+  // Prepay mode: members are pre-paid. Show two options.
+  if (isCard) {
+    return '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">' +
+      '<button class="btn btn-red btn-sm" style="flex:1" onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — give credit back to everyone">💸 Class Canceled</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="openChargeGroup(\'' + esc(gName) + '\')" title="Add an extra charge to everyone (rare)">+ Charge</button>' +
+    '</div>';
+  }
+  return '<button class="btn btn-red" onclick="openCreditGroup(\'' + esc(gName) + '\')">💸 Class Canceled — Credit Everyone</button> <button class="btn btn-gray" onclick="openChargeGroup(\'' + esc(gName) + '\')">+ Extra Charge</button>';
+}
+
+// v25: Credit Everyone — for canceled class days when in prepay mode
+function openCreditGroup(gName) {
+  const arc = archivedSet();
+  const members = DB.members.filter(m =>
+    !arc.has(m.name) && m.active && !isCurrentlyPaused(m.name) &&
+    m.group && m.group.toLowerCase().includes(gName.toLowerCase())
+  ).sort((a, b) => a.name.localeCompare(b.name));
+  if (!members.length) { alert('No active members in ' + gName + '.'); return; }
+  const today = new Date().toISOString().slice(0, 10);
+  const dpc = _defaultPerClass();
+  const listHTML = members.map(m => {
+    const amt = _applyAllDiscounts(m, m.amountPerClass || dpc);
+    return '<tr>' +
+      '<td><input type="checkbox" class="cred-check" data-name="' + esc(m.name) + '" data-amount="' + amt + '" checked></td>' +
+      '<td><strong>' + esc(m.name) + '</strong></td>' +
+      '<td>' + balHTML(m.balance) + '</td>' +
+      '<td style="color:#888">→</td>' +
+      '<td>' + balHTML(m.balance - amt) + '</td>' +
+    '</tr>';
+  }).join('');
+  document.getElementById('ov-charge-body').innerHTML =
+    '<div class="mh"><h2>💸 Credit Everyone — ' + esc(gName) + ' Group</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<p style="color:#555;font-size:0.88rem;margin-bottom:14px;background:#fdecea;padding:10px;border-radius:6px;border-left:4px solid #c0392b">⚠ Use this when a class was <strong>canceled</strong> and members already pre-paid for it. Each ticked member gets a credit (their balance goes down by their per-class amount).</p>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>Canceled-class date *</label><input id="cred-date" type="date" value="' + today + '"></div>' +
+    '</div>' +
+    '<div style="margin-top:16px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+        '<strong style="font-size:0.88rem">' + members.length + ' active members</strong>' +
+        '<div><button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.cred-check\').forEach(c=>c.checked=true)">Select All</button> ' +
+        '<button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.cred-check\').forEach(c=>c.checked=false)">Select None</button></div>' +
+      '</div>' +
+      '<div class="tw" style="max-height:360px;overflow-y:auto"><table>' +
+        '<thead><tr><th>Credit?</th><th>Name</th><th>Current Balance</th><th></th><th>After Credit</th></tr></thead>' +
+        '<tbody>' + listHTML + '</tbody>' +
+      '</table></div>' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
+      '<button class="btn btn-red" onclick="confirmCreditGroup(\'' + esc(gName) + '\')">💸 Credit Selected Members</button>' +
+    '</div>';
+  openOv('ov-charge');
+}
+function confirmCreditGroup(gName) {
+  const checked = [...document.querySelectorAll('.cred-check:checked')];
+  if (!checked.length) { alert('No one selected.'); return; }
+  const dateRaw = document.getElementById('cred-date').value;
+  if (!dateRaw) { alert('Pick a date.'); return; }
+  const d = new Date(dateRaw);
+  const dateStr = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
+  if (!confirm('Credit ' + checked.length + ' members in ' + gName + ' for canceled class on ' + dateStr + '?')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Credit ' + gName + ' (canceled class)');
+  let totalCredited = 0;
+  checked.forEach(cb => {
+    const name = cb.getAttribute('data-name');
+    const amount = parseFloat(cb.getAttribute('data-amount')) || _defaultPerClass();
+    const m = DB.members.find(x => x.name === name);
+    if (!m) return;
+    m.balance = (m.balance || 0) - amount;
+    totalCredited += amount;
+  });
+  // Log it as a "canceled" class entry
+  if (!DB.classes) DB.classes = [];
+  DB.classes.unshift({ date: dateStr, day: gName, canceled: true, amount: -1, count: checked.length, savedAt: Date.now() });
+  logAction('cls', 'cancel', 'Canceled ' + gName + ' on ' + dateStr + ' — credited ' + checked.length + ' members ' + _money(totalCredited));
+  closeOv('ov-charge');
+  saveDB();
+  reRenderAll();
+  alert('💸 Credited ' + checked.length + ' members for the canceled ' + gName + ' class on ' + dateStr + '. Total credited: ' + _money(totalCredited));
+}
+
 function openChargeGroup(gName) {
   const arc = archivedSet();
   const members = DB.members.filter(m =>
@@ -2198,11 +2324,11 @@ function openProfile(name) {
     '<div class="pi"><div class="pi-l">Current Balance</div><div class="pi-v">' + balHTML(m.balance) + '</div></div>' +
     '<div class="pi"><div class="pi-l">Per Class</div><div class="pi-v">$' + m.amountPerClass + '</div></div>' +
     '<div class="pi"><div class="pi-l">Classes Attended</div><div class="pi-v">' + m.totalClasses + '</div></div>' +
-    '<div class="pi"><div class="pi-l">Total Paid</div><div class="pi-v">$' + (m.totalPaid || 0).toFixed(0) + '</div></div>' +
+    '<div class="pi"><div class="pi-l">Total Paid</div><div class="pi-v">$' + (m.totalPaid || 0).toFixed(2) + '</div></div>' +
     _customFieldsProfileHTML(m) +
     '</div>';
 
-  h += '<div class="shead">💰 Payment History (' + mPay.length + ' payments · $' + tot.toFixed(0) + ' total)' +
+  h += '<div class="shead">💰 Payment History (' + mPay.length + ' payments · $' + tot.toFixed(2) + ' total)' +
     (editMode && !arc ? '<button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');openAddPayment(\'' + esc(m.name) + '\')">+ Add Payment</button>' : '') +
     '</div>';
   h += mPay.length
@@ -2210,7 +2336,7 @@ function openProfile(name) {
       mPay.map((p, i) =>
         '<tr><td style="color:#aaa;font-size:0.78rem">' + (mPay.length - i) + '</td>' +
         '<td>' + p.date + '</td>' +
-        '<td>' + (p.paid !== null ? '$' + p.paid.toFixed(0) : '<span class="badge b-pau">⚠</span>') + '</td>' +
+        '<td>' + (p.paid !== null ? '$' + p.paid.toFixed(2) : '<span class="badge b-pau">⚠</span>') + '</td>' +
         '<td>' + p.group + '</td>' +
         '<td>' + balHTML(p.balance) + '</td></tr>'
       ).join('') +
@@ -2435,16 +2561,16 @@ function apCalc() {
   const cur = parseFloat(document.getElementById('ap-cur').value) || 0;
   const amt = parseFloat(document.getElementById('ap-amt').value) || 0;
   const newB = cur - amt;
-  document.getElementById('ap-new').value = newB.toFixed(0);
+  document.getElementById('ap-new').value = newB.toFixed(2);
   apHint(newB);
 }
 function apHint(v) {
   const el = document.getElementById('ap-hint');
   if (!el) return;
   el.innerHTML = v < 0
-    ? '<span style="color:#1e8449">✓ Credit $' + Math.abs(v).toFixed(0) + '</span>'
+    ? '<span style="color:#1e8449">✓ Credit $' + Math.abs(v).toFixed(2) + '</span>'
     : v > 0
-    ? '<span style="color:#c0392b">Still owes $' + v.toFixed(0) + '</span>'
+    ? '<span style="color:#c0392b">Still owes $' + v.toFixed(2) + '</span>'
     : '<span style="color:#888">Even</span>';
 }
 function savePayment() {
@@ -2496,7 +2622,7 @@ function savePayment() {
   logAction('payment', 'add', 'Recorded $' + amt + ' payment from ' + name);
   closeOv('ov-pay');
   reRenderAll();
-  const bal = newBal < 0 ? 'Credit $' + Math.abs(newBal).toFixed(0) : newBal > 0 ? 'Owes $' + newBal.toFixed(0) : 'Even ($0)';
+  const bal = newBal < 0 ? 'Credit $' + Math.abs(newBal).toFixed(2) : newBal > 0 ? 'Owes $' + newBal.toFixed(2) : 'Even ($0)';
   alert('✅ $' + amt + ' payment saved for ' + grp + '.\nNew balance: ' + bal);
 }
 
@@ -3657,12 +3783,12 @@ function _collectFromEntry(entry, path) {
 }
 
 function _addToStaging(files) {
-  // Filter to .docx and .txt only
+  // Filter to .docx, .pdf, .txt, .rtf
   const valid = [];
   let skippedNotSupported = 0;
   let skippedDuplicate = 0;
   for (const f of files) {
-    if (!/\.(docx|txt)$/i.test(f.name)) { skippedNotSupported++; continue; }
+    if (!/\.(docx|txt|pdf|rtf)$/i.test(f.name)) { skippedNotSupported++; continue; }
     const key = f.name + '|' + f.size;
     if (_stagedSeen.has(key)) { skippedDuplicate++; continue; }
     _stagedSeen.add(key);
@@ -3672,7 +3798,7 @@ function _addToStaging(files) {
   _renderStaging();
   if (valid.length === 0 && (skippedNotSupported > 0 || skippedDuplicate > 0)) {
     let msg = '';
-    if (skippedNotSupported > 0) msg += skippedNotSupported + ' file(s) skipped (not .docx or .txt). ';
+    if (skippedNotSupported > 0) msg += skippedNotSupported + ' file(s) skipped (not .docx, .pdf, .txt, or .rtf). ';
     if (skippedDuplicate > 0) msg += skippedDuplicate + ' already added. ';
     showUploadError(msg.trim() || 'No new files to add.');
   } else {
@@ -4266,7 +4392,7 @@ function _rescueSaveManual(idx) {
   if (!text.trim()) { alert('No text to save.'); return; }
 
   // Use filename without extension as title
-  let title = item.name.replace(/\.(docx|txt)$/i, '').replace(/_/g, ' ').replace(/^.*\//, '');
+  let title = item.name.replace(/\.(docx|txt|pdf|rtf)$/i, '').replace(/_/g, ' ').replace(/^.*\//, '');
   title = title.charAt(0).toUpperCase() + title.slice(1);
 
   // Try to guess category from filename + content
@@ -4308,7 +4434,7 @@ function _rescueDownloadText(idx) {
   const item = _bulkQueue[idx];
   if (!item) return;
   const text = document.getElementById('rescue-text').value || item.rawText || '';
-  const filename = item.name.replace(/\.(docx|txt)$/i, '') + '.txt';
+  const filename = item.name.replace(/\.(docx|txt|pdf|rtf)$/i, '') + '.txt';
   const blob = new Blob([text], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -5071,6 +5197,57 @@ function _ensureSettingsSchema() {
   if (typeof b.smartChargeWarn !== 'boolean') b.smartChargeWarn = true;
   if (typeof b.welcomeBackOnLoad !== 'boolean') b.welcomeBackOnLoad = false;
   if (typeof b.customCSS !== 'string') b.customCSS = '';
+  // v24 Advanced — UI / interface customization
+  if (typeof b.uiDensity !== 'string') b.uiDensity = 'comfortable'; // compact | comfortable | spacious
+  if (typeof b.reduceAnimations !== 'boolean') b.reduceAnimations = false;
+  if (typeof b.highContrast !== 'boolean') b.highContrast = false;
+  if (typeof b.largeText !== 'boolean') b.largeText = false;
+  if (typeof b.defaultTab !== 'string') b.defaultTab = 'dashboard';
+  if (typeof b.headerShowAutoSaved !== 'boolean') b.headerShowAutoSaved = true;
+  if (typeof b.headerShowSubtitle !== 'boolean') b.headerShowSubtitle = true;
+  if (typeof b.dashShowOweTable !== 'boolean') b.dashShowOweTable = true;
+  if (typeof b.dashShowRecentPayments !== 'boolean') b.dashShowRecentPayments = true;
+  if (typeof b.dashShowBirthdays !== 'boolean') b.dashShowBirthdays = true;
+  if (typeof b.dashShowStats !== 'boolean') b.dashShowStats = true;
+  if (typeof b.tableAlternatingRows !== 'boolean') b.tableAlternatingRows = true;
+  // v24 Advanced — Display / formatting
+  if (typeof b.currencyPosition !== 'string') b.currencyPosition = 'before'; // before | after
+  // v25 BUGFIX: default to 2 decimals so cents are visible (was 0 = whole-dollar rounding)
+  if (typeof b.decimalPlaces !== 'number') b.decimalPlaces = 2;
+  // v25 ONE-TIME MIGRATION: existing users had 0 decimals from earlier versions — fix it once
+  if (!b._decimalsMigrated) { b.decimalPlaces = 2; b._decimalsMigrated = true; }
+  if (typeof b.thousandsSeparator !== 'string') b.thousandsSeparator = ','; // ',' | '.' | ' ' | ''
+  if (typeof b.negativeStyle !== 'string') b.negativeStyle = 'minus'; // minus | parens
+  if (typeof b.dateRelative !== 'boolean') b.dateRelative = false;
+  // v24 Advanced — Custom labels (rebrand any feature)
+  if (!b.labels || typeof b.labels !== 'object') b.labels = {};
+  const lbl = b.labels;
+  if (typeof lbl.member !== 'string') lbl.member = 'Member';
+  if (typeof lbl.members !== 'string') lbl.members = 'Members';
+  if (typeof lbl.payment !== 'string') lbl.payment = 'Payment';
+  if (typeof lbl.payments !== 'string') lbl.payments = 'Payments';
+  if (typeof lbl.group !== 'string') lbl.group = 'Group';
+  if (typeof lbl.groups !== 'string') lbl.groups = 'Groups';
+  if (typeof lbl.combo !== 'string') lbl.combo = 'Combo';
+  if (typeof lbl.combos !== 'string') lbl.combos = 'Combos';
+  // v24 Advanced — Sounds / notifications
+  if (typeof b.soundEffects !== 'boolean') b.soundEffects = false;
+  if (typeof b.notifyAfterSave !== 'boolean') b.notifyAfterSave = false;
+  // v24 Advanced — Print / receipt
+  if (typeof b.receiptHeader !== 'string') b.receiptHeader = '';
+  if (typeof b.receiptFooter !== 'string') b.receiptFooter = '';
+  // v24 Advanced — Custom welcome / footer
+  if (typeof b.customFooterText !== 'string') b.customFooterText = '';
+  if (typeof b.customWelcomeMessage !== 'string') b.customWelcomeMessage = '';
+  // v24 Advanced — Performance / behavior
+  if (typeof b.autoSaveSeconds !== 'number') b.autoSaveSeconds = 0; // 0 = save on every change (default)
+  if (typeof b.tablePageSize !== 'number') b.tablePageSize = 25;
+  // v24 Advanced — Custom JavaScript hook (for power users)
+  if (typeof b.customJS !== 'string') b.customJS = '';
+  // v25 — Prepay mode (members pay upfront → "Charge Everyone" becomes "Credit Everyone (canceled)")
+  if (typeof b.prepayMode !== 'boolean') b.prepayMode = false;
+  // v25 — FormSubmit (sends feedback email without leaving the app)
+  if (typeof b.feedbackUseFormSubmit !== 'boolean') b.feedbackUseFormSubmit = false;
   _syncDerivedLists();
 }
 
@@ -5465,11 +5642,47 @@ function sendBugReport() {
     '• Members: ' + memberCount + '\n' +
     '• Sent from: ' + (from || '(no email provided)') + '\n' +
     '• Date: ' + new Date().toString();
+  // v25: FormSubmit option — sends without leaving the app
+  const useFormSubmit = !!(DB.settings.backend && DB.settings.backend.feedbackUseFormSubmit);
+  if (useFormSubmit) {
+    // POST to FormSubmit — no signup needed, sends to "to" address
+    const formData = new FormData();
+    formData.append('_subject', subject);
+    formData.append('email', from || (DB.settings.backend.userIdentity || 'noreply@app.local'));
+    formData.append('message', body);
+    formData.append('_replyto', from || '');
+    formData.append('_template', 'box');
+    // Disable captcha/redirect to keep flow inside our app
+    formData.append('_captcha', 'false');
+    fetch('https://formsubmit.co/ajax/' + encodeURIComponent(to), {
+      method: 'POST',
+      body: formData,
+      headers: { 'Accept': 'application/json' }
+    })
+      .then(r => r.json())
+      .then(j => {
+        if (j.success === 'true' || j.success === true) {
+          alert('✅ Sent! ' + tag + ' delivered to ' + to + '.\n\n(First time only: FormSubmit may send a one-time confirmation email to ' + to + ' — click the link there to activate future deliveries.)');
+        } else {
+          alert('⚠ FormSubmit said: ' + (j.message || JSON.stringify(j)) + '\n\nFalling back to opening your email app instead…');
+          const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+          window.location.href = url;
+        }
+      })
+      .catch(err => {
+        alert('⚠ Could not send via FormSubmit (' + err.message + ').\n\nOpening your email app instead…');
+        const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+        window.location.href = url;
+      });
+    closeOv('ov-edit');
+    logAction('settings', 'feedback', tag + ' (FormSubmit): ' + subj);
+    return;
+  }
   const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
   window.location.href = url;
   closeOv('ov-edit');
   logAction('settings', 'feedback', tag + ': ' + subj);
-  setTimeout(() => alert('📬 Your email app should have opened with the message pre-filled. Just hit Send!'), 200);
+  setTimeout(() => alert('📬 Your email app should have opened with the message pre-filled. Just hit Send!\n\nTip: enable "Send feedback without leaving the app" in Advanced Settings to skip this.'), 200);
 }
 let _tourIdx = 0;
 let _tourPrevState = null;
@@ -5631,14 +5844,37 @@ function _renderTourSlide(step) {
     });
   }, 130); // matches CSS .25s fade — give half time to invisible state for swap
 }
-// v24: Jump to a tab while tour is open — close tour first
+// v24: Jump to a tab while tour is open — pause tour, allow resume from same step
 function _tourJumpToTab(tab) {
-  endTour();
+  // Pause tour (remember step), don't track as skip
+  const pausedAtIdx = _tourIdx;
+  ['tour-backdrop', 'tour-pop'].forEach(id => { const el = document.getElementById(id); if (el) el.remove(); });
+  _detachTourKeyboard();
   if (!editMode) {
     const sw = document.getElementById('mswitch');
     if (sw && !sw.checked) { sw.checked = true; sw.dispatchEvent(new Event('change')); }
   }
   try { showTab(tab); } catch (e) {}
+  _showResumeTourButton(pausedAtIdx);
+}
+function _showResumeTourButton(stepIdx) {
+  // Remove any existing resume button
+  const existing = document.getElementById('tour-resume');
+  if (existing) existing.remove();
+  const btn = document.createElement('button');
+  btn.id = 'tour-resume';
+  btn.style.cssText = 'position:fixed;bottom:80px;right:20px;background:linear-gradient(135deg,#2d6a9f,#4a8c4a);color:#fff;border:none;border-radius:30px;padding:11px 18px;box-shadow:0 6px 20px rgba(45,106,159,0.4);font-family:Arial;font-size:0.92rem;font-weight:700;cursor:pointer;z-index:200;display:flex;align-items:center;gap:8px;animation:tour-resume-pulse 2s ease-in-out infinite';
+  btn.innerHTML = '↶ Resume tour <span style="opacity:0.7;font-size:0.78rem;font-weight:500">step ' + (stepIdx + 1) + '</span>';
+  btn.onclick = function() {
+    btn.remove();
+    _tourIdx = stepIdx;
+    _ensureTourCard();
+    _attachTourKeyboard();
+    _showTourStep();
+  };
+  document.body.appendChild(btn);
+  // Auto-dismiss after 60 seconds
+  setTimeout(() => { const b = document.getElementById('tour-resume'); if (b) { b.style.opacity = '0'; b.style.transition = 'opacity 0.5s'; setTimeout(() => b.remove(), 500); } }, 60000);
 }
 
 // v22: Apply family discount to an amount based on the member's role in their family
@@ -5672,9 +5908,26 @@ function applyAppLevel() {
 
 // v20: helpers for currency and date formatting
 function _curr() { return (DB.settings && DB.settings.currency) ? DB.settings.currency : '$'; }
+// v24: respect Advanced settings (currency position, decimal places, thousands separator, negative style)
 function _money(n) {
-  const v = (typeof n === 'number' && !isNaN(n)) ? n : 0;
-  return _curr() + Math.round(v).toLocaleString();
+  const b = (DB.settings && DB.settings.backend) || {};
+  const decimals = (b.decimalPlaces != null && b.decimalPlaces >= 0) ? b.decimalPlaces : 0;
+  const thou = (b.thousandsSeparator != null) ? b.thousandsSeparator : ',';
+  const negStyle = b.negativeStyle || 'minus';
+  const pos = b.currencyPosition || 'before';
+  let v = (typeof n === 'number' && !isNaN(n)) ? n : 0;
+  const isNeg = v < 0;
+  v = Math.abs(v);
+  // Format with decimals
+  const fixed = v.toFixed(decimals);
+  const parts = fixed.split('.');
+  // Inject thousands separator
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, thou);
+  const numStr = parts.join('.');
+  const cur = _curr();
+  const sym = pos === 'after' ? (numStr + cur) : (cur + numStr);
+  if (isNeg) return negStyle === 'parens' ? '(' + sym + ')' : '-' + sym;
+  return sym;
 }
 function _fmtDate(s) {
   // Accepts "MM/DD/YYYY" or ISO; returns formatted per DB.settings.dateFormat
@@ -6145,9 +6398,284 @@ function renderSettings() {
     card(holidaysHTML, 'pro') +
     card(autoDarkHTML, 'pro') +
     card(themeHTML) +
-    card(backendHTML, 'pro') +
     card(installHTML, 'standard') +
+    // Pointer to the Advanced page (Pro)
+    '<div data-min-level="pro" style="background:linear-gradient(135deg,#fff7e6,#fde9c8);border:2px solid #f0a500;border-radius:10px;padding:18px 22px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px;cursor:pointer" onclick="showTab(\'advanced\')">' +
+      '<div style="display:flex;align-items:center;gap:14px">' +
+        '<div style="font-size:2rem">🔧</div>' +
+        '<div style="flex:1"><div style="font-weight:800;color:#856404;font-size:1.05rem">Advanced — Owner Settings</div><div style="font-size:0.85rem;color:#7a5500">Power-user controls: cloud sync, webhooks, UI density, custom labels, sounds, accessibility, custom CSS/JS, and 30+ more knobs.</div></div>' +
+        '<div style="font-size:1.5rem;color:#856404">→</div>' +
+      '</div>' +
+    '</div>' +
     card(dataHTML);
+}
+
+/* ============ v24: ADVANCED / OWNER PANEL — separate page with extensive settings ============ */
+function renderAdvanced() {
+  _ensureSettingsSchema();
+  const bk = DB.settings.backend;
+  const wrap = document.getElementById('advanced-content');
+  if (!wrap) return;
+
+  const advRow = (label, key, type, hint, opts) => {
+    const id = 'adv-' + key;
+    const v = bk[key];
+    let inp;
+    if (type === 'select') {
+      inp = '<select id="' + id + '" onchange="setBackend(\'' + key + '\', this.value)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">' +
+        opts.map(o => '<option value="' + o.v + '"' + (v === o.v ? ' selected' : '') + '>' + o.l + '</option>').join('') +
+      '</select>';
+    } else if (type === 'toggle') {
+      const on = !!v;
+      inp = '<label style="position:relative;display:inline-block;width:46px;height:24px"><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="setBackend(\'' + key + '\', this.checked)" style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;inset:0;background:' + (on ? '#27ae60' : '#ccc') + ';border-radius:24px;transition:0.25s"></span><span style="position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:18px;height:18px;background:#fff;border-radius:50%;transition:0.25s"></span></label>';
+    } else if (type === 'textarea') {
+      inp = '<textarea id="' + id + '" rows="3" style="font-family:monospace;font-size:0.82rem;padding:8px;border:1px solid #ccc;border-radius:6px;width:100%" onchange="setBackend(\'' + key + '\', this.value)">' + esc(v || '') + '</textarea>';
+    } else if (type === 'number') {
+      inp = '<input id="' + id + '" type="number" value="' + (v != null ? v : 0) + '" onchange="setBackend(\'' + key + '\', parseFloat(this.value)||0)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">';
+    } else {
+      inp = '<input id="' + id + '" type="' + (type === 'password' ? 'password' : 'text') + '" value="' + _escAttr(v || '') + '" onchange="setBackend(\'' + key + '\', this.value)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">';
+    }
+    return '<div class="fg" style="margin-bottom:12px"><label style="font-weight:600;color:#444;font-size:0.85rem">' + label + '</label>' + inp + (hint ? '<div class="hint" style="font-size:0.78rem;color:#888;margin-top:4px">' + hint + '</div>' : '') + '</div>';
+  };
+  const labelRow = (label, key, hint) => {
+    const v = (bk.labels && bk.labels[key]) || '';
+    return '<div class="fg" style="margin-bottom:10px"><label style="font-weight:600;color:#444;font-size:0.85rem">' + label + '</label><input type="text" value="' + _escAttr(v) + '" onchange="setBackendLabel(\'' + key + '\', this.value)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">' + (hint ? '<div class="hint" style="font-size:0.78rem;color:#888;margin-top:4px">' + hint + '</div>' : '') + '</div>';
+  };
+
+  const section = (icon, title, desc, body) =>
+    '<details open style="background:#fff;border-radius:12px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:14px">' +
+      '<summary style="cursor:pointer;font-weight:700;font-size:1.05rem;color:#1a3a5c;list-style:none;padding:4px 0">' + icon + ' ' + title + '</summary>' +
+      (desc ? '<p style="font-size:0.85rem;color:#666;margin:8px 0 14px">' + desc + '</p>' : '') +
+      '<div style="margin-top:8px">' + body + '</div>' +
+    '</details>';
+
+  let html = '';
+
+  // Section 1: Identity
+  html += section('👤', 'Identity & organization', 'Used as default sender + identity in cloud sync, statements, receipts.',
+    advRow('Your email (owner)', 'userIdentity', 'text') +
+    advRow('Organization / business name', 'organizationName', 'text', 'Falls back to App Name if blank.')
+  );
+
+  // Section 2: UI / interface
+  html += section('🎨', 'UI / interface', 'Tweak the look and feel without touching CSS.',
+    advRow('UI density', 'uiDensity', 'select', 'Compact = tighter spacing. Spacious = roomier.', [{v:'compact', l:'Compact'}, {v:'comfortable', l:'Comfortable (default)'}, {v:'spacious', l:'Spacious'}]) +
+    advRow('Reduce animations', 'reduceAnimations', 'toggle', 'For users with motion sensitivity or older devices.') +
+    advRow('High-contrast mode', 'highContrast', 'toggle', 'Bolder borders, stronger color separation.') +
+    advRow('Large text', 'largeText', 'toggle', 'Bumps font sizes up ~15%.') +
+    advRow('Default tab on app open', 'defaultTab', 'select', null, [{v:'dashboard', l:'Dashboard'}, {v:'members', l:'Members'}, {v:'payments', l:'Payments'}, {v:'groups', l:'Groups'}, {v:'notes', l:'Notes'}, {v:'reports', l:'Reports'}]) +
+    advRow('Show "Auto-saved" indicator in header', 'headerShowAutoSaved', 'toggle') +
+    advRow('Show subtitle ("X active members") in header', 'headerShowSubtitle', 'toggle') +
+    advRow('Alternating table row colors', 'tableAlternatingRows', 'toggle') +
+    advRow('Members per page in tables', 'tablePageSize', 'number', 'Default 25.')
+  );
+
+  // Section 3: Dashboard layout
+  html += section('📊', 'Dashboard layout', 'Show or hide each section of the Dashboard.',
+    advRow('Show summary stats row', 'dashShowStats', 'toggle') +
+    advRow('Show "Members who owe" table', 'dashShowOweTable', 'toggle') +
+    advRow('Show recent payments', 'dashShowRecentPayments', 'toggle') +
+    advRow('Show birthdays this month', 'dashShowBirthdays', 'toggle')
+  );
+
+  // Section 4: Display & formatting
+  html += section('💰', 'Currency & number formatting',
+    'Fine-grained control over how money displays everywhere.',
+    advRow('Currency symbol position', 'currencyPosition', 'select', null, [{v:'before', l:'Before amount ($15)'}, {v:'after', l:'After amount (15$)'}]) +
+    advRow('Decimal places', 'decimalPlaces', 'select', '0 = $15 · 2 = $15.00', [{v:0, l:'0 (rounded)'}, {v:1, l:'1 ($15.0)'}, {v:2, l:'2 ($15.00)'}]) +
+    advRow('Thousands separator', 'thousandsSeparator', 'select', null, [{v:',', l:'Comma (1,234)'}, {v:'.', l:'Period (1.234)'}, {v:' ', l:'Space (1 234)'}, {v:'', l:'None (1234)'}]) +
+    advRow('Negative number style', 'negativeStyle', 'select', null, [{v:'minus', l:'Minus sign (-$5)'}, {v:'parens', l:'Parentheses (($5))'}]) +
+    advRow('Show dates as "3 days ago" instead of "04/26"', 'dateRelative', 'toggle')
+  );
+
+  // Section 5: Custom labels (rebranding)
+  html += section('🏷', 'Custom labels (rebrand)', 'Rename core concepts to match YOUR business. Examples: "Members" → "Customers", "Payments" → "Charges", etc.',
+    labelRow('"Member" (singular)', 'member') +
+    labelRow('"Members" (plural)', 'members') +
+    labelRow('"Payment" (singular)', 'payment') +
+    labelRow('"Payments" (plural)', 'payments') +
+    labelRow('"Group" (singular)', 'group') +
+    labelRow('"Groups" (plural)', 'groups') +
+    labelRow('"Combo" (note item)', 'combo') +
+    labelRow('"Combos" (plural)', 'combos')
+  );
+
+  // Section 6: Cloud sync (multi-device)
+  html += section('☁️', 'Cloud sync (multi-device, multi-user)',
+    '<strong style="color:#d97706">⚠ Not yet wired.</strong> Save your credentials here now — when we activate it (next major build), it\'s a one-click switch.',
+    advRow('Provider', 'cloudSyncProvider', 'select', null, [{v:'none', l:'None — local only (current)'}, {v:'supabase', l:'Supabase (free tier — recommended)'}, {v:'firebase', l:'Firebase (free tier)'}]) +
+    advRow('Supabase URL', 'supabaseUrl', 'text', 'e.g. https://xxxxx.supabase.co · Get this from supabase.com Settings → API.') +
+    advRow('Supabase anon key', 'supabaseAnonKey', 'password', 'Public-safe key. Found in Settings → API in your Supabase dashboard.') +
+    advRow('Firebase config (paste full JSON)', 'firebaseConfig', 'textarea', 'The {apiKey, authDomain, ...} object from Firebase console.')
+  );
+
+  // Section 7: Integrations / webhooks
+  html += section('📡', 'Webhooks & integrations',
+    'POST every payment + group charge to your URL. Use Zapier, Make, IFTTT, n8n to connect to anything.',
+    advRow('Webhook URL', 'webhookUrl', 'text', 'Try free with webhook.site to test. Fires on payment.recorded and group.charged events.') +
+    '<button class="btn btn-blue btn-sm" onclick="_testWebhook()" style="margin-top:6px">📡 Send test event</button>'
+  );
+
+  // Section 8: Validation rules
+  html += section('⚖️', 'Validation rules & thresholds',
+    'How sensitive should the safety warnings be? Set 0 to disable any threshold.',
+    advRow('Auto-archive members inactive for X months', 'autoArchiveMonths', 'number', '0 = never. Reviewed each app load. Members with no payment in this many months get auto-archived.') +
+    advRow('Anomaly multiplier (warn if payment > X × per-class)', 'anomalyChargeMultiplier', 'number', 'Default 50.') +
+    advRow('Duplicate-payment window (minutes)', 'duplicateWindowMinutes', 'number', 'Same member + same amount within this many minutes triggers a warning. Default 5.') +
+    advRow('"Owes too much" balance threshold (' + _curr() + ')', 'maxBalanceWarning', 'number', 'Default 500. (Currently informational.)') +
+    advRow('Phone format regex (validation)', 'phoneFormat', 'text', 'Optional. Example: ^[0-9-+() ]{7,}$') +
+    advRow('Email format regex (validation)', 'emailFormat', 'text')
+  );
+
+  // Section 9: Confirmations / safety
+  html += section('🛡', 'Confirmation prompts (master switches)',
+    'Master toggles for the smart safety prompts.',
+    advRow('Confirm before deleting payments', 'confirmDeletePayment', 'toggle') +
+    advRow('Extra warning for risky archive (credit/debt members)', 'confirmRiskyArchive', 'toggle') +
+    advRow('Smart Charge-Everyone warnings', 'smartChargeWarn', 'toggle', 'Day-of-week + already-charged-today checks.')
+  );
+
+  // Section 9b: Billing model
+  html += section('💵', 'Billing model',
+    'Choose between post-pay (default) and pre-pay billing.',
+    advRow('Pre-pay mode (members pay upfront)', 'prepayMode', 'toggle', 'When ON, the Groups page shows <strong>"💸 Class Canceled — Credit Everyone"</strong> as the main button (since members already paid). The regular "+ Charge" button is still there for extras.') +
+    '<div style="background:#f0f4f8;padding:10px;border-radius:6px;font-size:0.82rem;color:#555;margin-top:8px"><strong>Default model (OFF):</strong> Each class day, you click "Charge Everyone" to add the class fee to balances. Members pay you back later.<br><br><strong>Pre-pay (ON):</strong> Members pre-pay (e.g. monthly via recurring billing). When a class runs, nothing happens. When a class is canceled, you click "Class Canceled" and credits go back to everyone.</div>'
+  );
+
+  // Section 9c: Feedback delivery
+  html += section('📨', 'Feedback delivery',
+    null,
+    advRow('Send feedback emails without leaving the app (FormSubmit)', 'feedbackUseFormSubmit', 'toggle', 'When ON, the 📨 Send Feedback button POSTs to FormSubmit (free, no signup, no app switch). When OFF, opens your email app via mailto:.<br><br>⚠ First-time use: FormSubmit will send a one-time confirmation email to your "Send to" address — click the link to activate.')
+  );
+
+  // Section 10: Privacy & sharing
+  html += section('🔐', 'Privacy & sharing',
+    null,
+    advRow('Public statement link privacy', 'publicStatementPrivacy', 'select', null, [{v:'off', l:'Off — disable links entirely'}, {v:'token', l:'Obfuscated token (default)'}, {v:'pin', l:'Token + 4-digit PIN'}]) +
+    advRow('Statement PIN', 'statementPin', 'password', '4 digits. Only used if PIN privacy mode is selected.') +
+    advRow('Allow members to edit own profile', 'allowMembersEditOwnProfile', 'toggle', '(Future feature — needs cloud sync.)')
+  );
+
+  // Section 11: Sounds & notifications
+  html += section('🔔', 'Sounds & notifications',
+    null,
+    advRow('Sound effect on save / actions', 'soundEffects', 'toggle', 'Subtle chime when payment / member saved.') +
+    advRow('Browser notification after save', 'notifyAfterSave', 'toggle', 'Shows a system notification on save (asks permission first time).')
+  );
+
+  // Section 12: Print & receipts
+  html += section('🧾', 'Print & receipts',
+    'Customize the printable statement layout.',
+    advRow('Custom header for statements', 'receiptHeader', 'text', 'Appears at the top of every printed member statement. Example: "Sara\'s Yoga Group · 555-1234"') +
+    advRow('Custom footer for statements', 'receiptFooter', 'text', 'Appears at the bottom. Example: "Thank you! See you next class."')
+  );
+
+  // Section 13: Welcome & footer
+  html += section('💬', 'Welcome message & footer',
+    null,
+    advRow('Custom welcome message (banner on dashboard)', 'customWelcomeMessage', 'text', 'Leave blank for none. Shows once per session.') +
+    advRow('Custom footer text', 'customFooterText', 'text', 'Shows at the bottom of every page.')
+  );
+
+  // Section 14: Performance
+  html += section('⚡', 'Performance & behavior',
+    null,
+    advRow('Auto-save debounce (seconds)', 'autoSaveSeconds', 'number', '0 = save immediately on every change (default). >0 = wait this many seconds before saving.')
+  );
+
+  // Section 15: Data export
+  html += section('💾', 'Data export options',
+    null,
+    advRow('Include member photos in backup files', 'exportIncludesPhotos', 'toggle', 'Photos are stored as base64 — turning OFF makes backups dramatically smaller.')
+  );
+
+  // Section 16: Custom CSS / JS
+  html += section('💻', 'Custom CSS / JavaScript (power users)',
+    '<strong>⚠ Advanced.</strong> Inject your own CSS or JS. Powerful — use carefully.',
+    advRow('Custom CSS', 'customCSS', 'textarea', 'Overrides any styles. Applied immediately.') +
+    '<button class="btn btn-blue btn-sm" onclick="applyCustomCSS()" style="margin-top:6px;margin-bottom:14px">Apply CSS now</button>' +
+    advRow('Custom JavaScript hook', 'customJS', 'textarea', 'Runs once on app load. Has access to DB and all functions. Save to apply (then reload).') +
+    '<div style="background:#fff3cd;padding:10px;border-radius:6px;font-size:0.78rem;color:#856404;margin-top:8px"><strong>⚠ Security:</strong> Custom JS runs with full access. Only paste code you trust.</div>'
+  );
+
+  // Section 17: Usage stats
+  const ts = DB.settings.tourStats || { starts: 0, completes: 0, skipsAt: [] };
+  const sessionAge = DB._savedAt ? Math.round((Date.now() - DB._savedAt) / 1000) : 0;
+  html += section('📊', 'Usage statistics',
+    'Read-only data about how the app is being used.',
+    '<div style="font-size:0.88rem;color:#444;line-height:1.7">' +
+      '<div>📦 <strong>Members:</strong> ' + (DB.members || []).length + ' (' + (DB.archived || []).length + ' archived)</div>' +
+      '<div>💰 <strong>Total payments:</strong> ' + (DB.payments || []).length + '</div>' +
+      '<div>📝 <strong>Combos:</strong> ' + ((DB.notes && DB.notes.combos) || []).length + '</div>' +
+      '<div>📜 <strong>Activity log entries:</strong> ' + (DB._log || []).length + '</div>' +
+      '<div>🎓 <strong>Tour:</strong> started ' + ts.starts + ' time(s), completed ' + ts.completes + ', skipped ' + (ts.skipsAt || []).length + '</div>' +
+      '<div>🖥 <strong>This device:</strong> ' + esc(_deviceLabel()) + '</div>' +
+      '<div>💾 <strong>Last saved to localStorage:</strong> ' + (DB._savedAt ? new Date(DB._savedAt).toLocaleString() : 'never') + '</div>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">' +
+      '<button class="btn btn-gray btn-sm" onclick="if(confirm(\'Clear activity log?\')){DB._log=[];saveDB();renderAdvanced();alert(\'Log cleared.\');}">🗑 Clear activity log</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="if(confirm(\'Reset tour statistics?\')){DB.settings.tourStats={starts:0,completes:0,skipsAt:[]};saveDB();renderAdvanced();}">↺ Reset tour stats</button>' +
+    '</div>'
+  );
+
+  // Footer / quick nav
+  html += '<div style="text-align:center;margin-top:24px;padding:16px;background:#f5f8fc;border-radius:10px"><button class="btn btn-blue" onclick="showTab(\'settings\')">← Back to Settings</button>&nbsp; <button class="btn btn-gray" onclick="exportBackup()">💾 Save Backup</button></div>';
+
+  wrap.innerHTML = html;
+}
+
+// v24: Set a label key under DB.settings.backend.labels
+function setBackendLabel(key, value) {
+  _ensureSettingsSchema();
+  if (!DB.settings.backend.labels) DB.settings.backend.labels = {};
+  DB.settings.backend.labels[key] = value;
+  saveDB();
+  applyAdvancedSettings();
+  reRenderAll();
+}
+
+// v24: Test webhook (sends a hello event)
+function _testWebhook() {
+  const url = (DB.settings.backend && DB.settings.backend.webhookUrl) || '';
+  if (!url) { alert('Set a Webhook URL first.'); return; }
+  _fireWebhook('test.hello', { msg: 'Hello from your Exercise Group app! If you received this, the webhook works.' });
+  alert('📡 Test event sent to ' + url + '.\n\nCheck your endpoint (try webhook.site for free testing) — you should see a payment-style JSON event.');
+}
+
+// v24: Apply UI / display settings from backend config to DOM
+function applyAdvancedSettings() {
+  _ensureSettingsSchema();
+  const b = DB.settings.backend || {};
+  // Body classes for UI tweaks
+  document.body.classList.remove('density-compact', 'density-comfortable', 'density-spacious', 'reduce-anim', 'high-contrast', 'large-text');
+  document.body.classList.add('density-' + (b.uiDensity || 'comfortable'));
+  if (b.reduceAnimations) document.body.classList.add('reduce-anim');
+  if (b.highContrast) document.body.classList.add('high-contrast');
+  if (b.largeText) document.body.classList.add('large-text');
+  // Header element visibility
+  const ss = document.getElementById('save-status'); if (ss) ss.style.display = b.headerShowAutoSaved === false ? 'none' : '';
+  const hs = document.getElementById('hdr-sub'); if (hs) hs.style.display = b.headerShowSubtitle === false ? 'none' : '';
+  // v25: Dashboard widget visibility
+  const dsStats = document.getElementById('ds-stats'); if (dsStats) dsStats.style.display = b.dashShowStats === false ? 'none' : '';
+  const dsOwe = document.getElementById('ds-owe-wrap'); if (dsOwe) dsOwe.style.display = b.dashShowOweTable === false ? 'none' : '';
+  const dsRec = document.getElementById('ds-recent-wrap'); if (dsRec) dsRec.style.display = b.dashShowRecentPayments === false ? 'none' : '';
+  const dsBd = document.getElementById('ds-birthdays-wrap');
+  if (dsBd && b.dashShowBirthdays === false) dsBd.style.display = 'none';
+  // (Note: birthday widget normally hides itself when no birthdays — we just allow user to force-hide always.)
+  // Custom footer
+  let footer = document.getElementById('custom-footer');
+  if (b.customFooterText) {
+    if (!footer) {
+      footer = document.createElement('div');
+      footer.id = 'custom-footer';
+      footer.style.cssText = 'text-align:center;padding:14px;font-size:0.82rem;color:#888;border-top:1px solid #eee;margin-top:24px';
+      document.body.appendChild(footer);
+    }
+    footer.textContent = b.customFooterText;
+    footer.style.display = '';
+  } else if (footer) {
+    footer.style.display = 'none';
+  }
 }
 
 // v24: Generic backend setting writer
@@ -6870,8 +7398,25 @@ applyBranding();
 applyTheme();
 applyAppLevel();
 applyCustomCSS();
+applyAdvancedSettings();
 // v24: auto-archive on load (only if user enabled it via threshold > 0)
 setTimeout(() => { try { _runAutoArchive(); } catch (e) { console.warn('Auto-archive error:', e); } }, 1500);
+// v24: Run user's custom JS hook (sandbox-free — they own this code)
+setTimeout(() => {
+  try {
+    const js = DB.settings.backend && DB.settings.backend.customJS;
+    if (js && js.trim()) (new Function(js))();
+  } catch (e) { console.warn('Custom JS error:', e.message); }
+}, 200);
+// v24: Apply default tab on first load (after init)
+setTimeout(() => {
+  try {
+    const defaultTab = DB.settings.backend && DB.settings.backend.defaultTab;
+    if (defaultTab && defaultTab !== 'dashboard' && document.getElementById('tab-' + defaultTab)) {
+      showTab(defaultTab);
+    }
+  } catch (e) {}
+}, 100);
 
 // v21: If URL has a #statement=... hash, render the read-only statement view and stop.
 if (_maybeRenderStatementHash()) {
