@@ -547,8 +547,6 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   <button data-tab="archived" class="corner-btn">🗃 Former</button>
   <button data-tab="lookup" class="corner-btn">🔍 Lookup</button>
   <button data-tab="settings" class="corner-btn edit-only">⚙ Settings</button>
-  <!-- v26: Advanced removed from top nav. Reach it from Settings → 🔧 Advanced card -->
-  <button data-tab="advanced" class="corner-btn edit-only" style="display:none">🔧 Advanced</button>
 </nav>
 
 <!-- DASHBOARD -->
@@ -5259,6 +5257,24 @@ function _ensureSettingsSchema() {
   if (typeof b.prepayMode !== 'boolean') b.prepayMode = false;
   // v25 — FormSubmit (sends feedback email without leaving the app)
   if (typeof b.feedbackUseFormSubmit !== 'boolean') b.feedbackUseFormSubmit = false;
+  // v27 — Hide tabs from main nav (per-tab visibility)
+  if (typeof b.hideNotesTab !== 'boolean') b.hideNotesTab = false;
+  if (typeof b.hideReportsTab !== 'boolean') b.hideReportsTab = false;
+  if (typeof b.hideLookupTab !== 'boolean') b.hideLookupTab = false;
+  if (typeof b.hidePausedTab !== 'boolean') b.hidePausedTab = false;
+  if (typeof b.hideArchivedTab !== 'boolean') b.hideArchivedTab = false;
+  if (typeof b.hideLogTab !== 'boolean') b.hideLogTab = false;
+  if (typeof b.hideGroupsTab !== 'boolean') b.hideGroupsTab = false;
+  // v27 — Member display preferences
+  if (typeof b.showAvatarInTables !== 'boolean') b.showAvatarInTables = true;
+  if (typeof b.showTagsInTables !== 'boolean') b.showTagsInTables = true;
+  if (typeof b.showMemberCountInTabs !== 'boolean') b.showMemberCountInTabs = false;
+  // v27 — Quick action preferences
+  if (typeof b.bigPaymentButtonOnDashboard !== 'boolean') b.bigPaymentButtonOnDashboard = true;
+  if (typeof b.confirmBeforeArchive !== 'boolean') b.confirmBeforeArchive = true;
+  // v27 — Default new member preferences
+  if (typeof b.newMemberDefaultActive !== 'boolean') b.newMemberDefaultActive = true;
+  if (typeof b.newMemberDefaultStartToday !== 'boolean') b.newMemberDefaultStartToday = true;
   // v26 — Cloud sync (Supabase, passphrase-encrypted)
   if (typeof b.syncPassphrase !== 'string') b.syncPassphrase = '';
   if (typeof b.syncAutoOnSave !== 'boolean') b.syncAutoOnSave = true;
@@ -5433,12 +5449,68 @@ function _eg_setSyncStatus(level, text) {
   }
 }
 
+// v26: Share sync code — bundle URL+key+passphrase as one paste-able blob
+function getSyncShareCode() {
+  _ensureSettingsSchema();
+  const cfg = DB.settings.backend;
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.syncPassphrase) {
+    alert('Set up cloud sync first.');
+    return;
+  }
+  const blob = JSON.stringify({
+    v: 1,
+    url: cfg.supabaseUrl,
+    key: cfg.supabaseAnonKey,
+    pass: cfg.syncPassphrase,
+    org: cfg.organizationName || ''
+  });
+  const code = 'EG-SYNC-' + btoa(unescape(encodeURIComponent(blob))).replace(/=/g, '');
+  document.getElementById('ov-edit-body').innerHTML =
+    '<div class="mh"><h2>📋 Share sync code</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
+    '<p style="font-size:0.88rem;color:#444;line-height:1.6;margin-bottom:12px">Send this code to your other device, phone, or to anyone who should sync with the SAME data. They paste it into <strong>Settings → 🔧 Advanced → ☁ Cloud sync → "I have a sync code"</strong> and they\'re instantly connected.</p>' +
+    '<div style="background:#fff3cd;border-left:4px solid #f0a500;padding:10px;border-radius:6px;font-size:0.82rem;color:#856404;margin-bottom:12px">⚠ <strong>Treat this code like a password.</strong> Anyone with it gets full access to your data. Send it via a private channel (text/email), not public.</div>' +
+    '<textarea readonly style="width:100%;height:140px;font-family:monospace;font-size:0.78rem;padding:10px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff;word-break:break-all" onclick="this.select()">' + code + '</textarea>' +
+    '<div class="factions">' +
+      '<button class="btn btn-blue" onclick="navigator.clipboard.writeText(\'' + code + '\').then(()=>alert(\'📋 Code copied to clipboard!\\n\\nNow open the app on your other device and paste it in the sync setup.\'))">📋 Copy code</button>' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Done</button>' +
+    '</div>';
+  openOv('ov-edit');
+}
+
+// v26: Apply a sync code (the receiver side)
+function applySyncCode() {
+  const code = (document.getElementById('sync-paste-code') || {}).value || '';
+  const trimmed = code.trim();
+  if (!trimmed) { alert('Paste a sync code first.'); return; }
+  if (!trimmed.startsWith('EG-SYNC-')) { alert('That doesn\'t look like a valid sync code. It should start with "EG-SYNC-".'); return; }
+  try {
+    const b64 = trimmed.slice(8); // strip "EG-SYNC-"
+    const json = decodeURIComponent(escape(atob(b64.replace(/-/g, '+').replace(/_/g, '/'))));
+    const data = JSON.parse(json);
+    if (!data.url || !data.key || !data.pass) throw new Error('Code is missing required fields');
+    document.getElementById('sync-url').value = data.url;
+    document.getElementById('sync-key').value = data.key;
+    document.getElementById('sync-pass').value = data.pass;
+    alert('✅ Code accepted! All three fields filled.\n\nNow click 🧪 Test connection, then 💾 Save & activate sync. Your data will pull down automatically.');
+  } catch (e) {
+    alert('❌ That code looks corrupted: ' + e.message);
+  }
+}
+
 // Open the Setup Cloud Sync wizard
 function openCloudSyncWizard() {
   const cfg = DB.settings.backend;
   document.getElementById('ov-edit-body').innerHTML =
     '<div class="mh"><h2>☁ Set up Cloud Sync</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
     '<p style="font-size:0.88rem;color:#444;margin-bottom:10px">Sync your data across all your devices using <strong>Supabase</strong> (free tier) with end-to-end encryption. Your data is encrypted on YOUR device before being uploaded — nobody else can read it, not even Supabase.</p>' +
+    // v26: Quick path — paste a sync code from another device
+    '<details style="background:#e8f5e9;border:2px solid #4a8c4a;border-radius:8px;padding:10px 14px;margin-bottom:14px"><summary style="cursor:pointer;font-weight:700;color:#155724">⚡ Already have a sync code from another device? Paste it here →</summary>' +
+      '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">' +
+        '<input id="sync-paste-code" type="text" placeholder="EG-SYNC-..." style="flex:1;min-width:200px;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-family:monospace;font-size:0.82rem">' +
+        '<button class="btn btn-green" onclick="applySyncCode()">⚡ Apply code</button>' +
+      '</div>' +
+      '<div style="font-size:0.78rem;color:#155724;margin-top:6px">A sync code auto-fills all three fields below. Then just click "Test" and "Save & activate."</div>' +
+    '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">📝 Step 1: Create a free Supabase account</summary>' +
       '<ol style="font-size:0.88rem;line-height:1.7;margin:6px 0 12px 24px">' +
         '<li>Go to <a href="https://supabase.com" target="_blank" style="color:#2d6a9f;font-weight:700">supabase.com</a> → Sign up (it\'s free)</li>' +
@@ -6779,7 +6851,27 @@ function renderAdvanced() {
     advRow('Show the colored summary boxes (active, owe, etc.)', 'dashShowStats', 'toggle') +
     advRow('Show "Members Who Owe Money" list', 'dashShowOweTable', 'toggle') +
     advRow('Show recent payments list', 'dashShowRecentPayments', 'toggle') +
-    advRow('Show "Birthdays This Month"', 'dashShowBirthdays', 'toggle')
+    advRow('Show "Birthdays This Month"', 'dashShowBirthdays', 'toggle') +
+    advRow('Show big "💰 Record a Payment" button at top', 'bigPaymentButtonOnDashboard', 'toggle', 'The large green button. Helpful when you record many payments.')
+  );
+
+  // Section 3b: Hide tabs you don't use
+  html += section('🚫', 'Hide tabs you don\'t use',
+    'Each toggle hides that tab from the top navigation. The data is still there — just not visible. Turn back on any time.',
+    advRow('Hide 🗂 Groups tab', 'hideGroupsTab', 'toggle') +
+    advRow('Hide 📝 Notes tab', 'hideNotesTab', 'toggle', 'For people who don\'t use the combo library.') +
+    advRow('Hide 📈 Reports tab', 'hideReportsTab', 'toggle') +
+    advRow('Hide ⏸ Paused tab', 'hidePausedTab', 'toggle') +
+    advRow('Hide 🗃 Former tab', 'hideArchivedTab', 'toggle') +
+    advRow('Hide 🔍 Lookup tab', 'hideLookupTab', 'toggle') +
+    advRow('Hide 📜 Log tab', 'hideLogTab', 'toggle')
+  );
+
+  // Section 3c: Member display
+  html += section('👤', 'Member display preferences',
+    'How members look in tables and lists.',
+    advRow('Show avatars (photos / initials) in tables', 'showAvatarInTables', 'toggle') +
+    advRow('Show colored tags next to names', 'showTagsInTables', 'toggle')
   );
 
   // Section 4: Display & formatting
@@ -6823,6 +6915,7 @@ function renderAdvanced() {
       (syncOn ? '<button class="btn btn-green" onclick="syncNow(\'auto\').then(()=>renderAdvanced())">↻ Sync now</button>' : '') +
       (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PUSH — overwrite cloud with local data?\'))syncNow(\'push\').then(()=>renderAdvanced())">⬆ Force push</button>' : '') +
       (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PULL — overwrite local data with cloud?\\n\\nLocal changes since last sync will be LOST.\'))syncNow(\'pull\').then(()=>renderAdvanced())">⬇ Force pull</button>' : '') +
+      (syncOn ? '<button class="btn btn-blue" onclick="getSyncShareCode()" title="Get a code you can paste on another device to sync them too">📋 Share sync code</button>' : '') +
       (syncOn ? '<button class="btn btn-red" onclick="if(confirm(\'Disconnect cloud sync? Your data stays on this device. Re-connect any time.\')){DB.settings.backend.cloudSyncProvider=\'none\';saveDB();renderAdvanced();}">🔌 Disconnect</button>' : '') +
     '</div>' +
     advRow('Auto-sync after every save', 'syncAutoOnSave', 'toggle', 'When ON, every change pushes to cloud (debounced ~2.5 sec).') +
@@ -6999,12 +7092,25 @@ function applyAdvancedSettings() {
   // Header element visibility
   const ss = document.getElementById('save-status'); if (ss) ss.style.display = b.headerShowAutoSaved === false ? 'none' : '';
   const hs = document.getElementById('hdr-sub'); if (hs) hs.style.display = b.headerShowSubtitle === false ? 'none' : '';
+  // v27: Big payment button on dashboard
+  const bigBtn = document.querySelector('.big-payment-btn');
+  if (bigBtn) bigBtn.style.display = b.bigPaymentButtonOnDashboard === false ? 'none' : '';
   // v25: Dashboard widget visibility
   const dsStats = document.getElementById('ds-stats'); if (dsStats) dsStats.style.display = b.dashShowStats === false ? 'none' : '';
   const dsOwe = document.getElementById('ds-owe-wrap'); if (dsOwe) dsOwe.style.display = b.dashShowOweTable === false ? 'none' : '';
   const dsRec = document.getElementById('ds-recent-wrap'); if (dsRec) dsRec.style.display = b.dashShowRecentPayments === false ? 'none' : '';
   const dsBd = document.getElementById('ds-birthdays-wrap');
   if (dsBd && b.dashShowBirthdays === false) dsBd.style.display = 'none';
+  // v27: Hide nav tabs based on user preference
+  const tabHideMap = {
+    notes: b.hideNotesTab, reports: b.hideReportsTab, lookup: b.hideLookupTab,
+    paused: b.hidePausedTab, archived: b.hideArchivedTab, log: b.hideLogTab,
+    groups: b.hideGroupsTab
+  };
+  Object.keys(tabHideMap).forEach(tab => {
+    const btn = document.querySelector('nav#mainnav button[data-tab="' + tab + '"]');
+    if (btn) btn.style.display = tabHideMap[tab] ? 'none' : '';
+  });
   // (Note: birthday widget normally hides itself when no birthdays — we just allow user to force-hide always.)
   // Custom footer
   let footer = document.getElementById('custom-footer');
@@ -7028,9 +7134,18 @@ function setBackend(key, value) {
   if (!DB.settings.backend) DB.settings.backend = {};
   DB.settings.backend[key] = value;
   saveDB();
-  // Live-apply some settings
+  // Live-apply UI/display settings instantly
   if (key === 'customCSS') applyCustomCSS();
   if (key === 'organizationName' || key === 'userIdentity') applyBranding();
+  // v26: re-apply ALL UI settings immediately (density, dashboard widgets, font size, etc.)
+  if (typeof applyAdvancedSettings === 'function') applyAdvancedSettings();
+  // v26 BUGFIX: re-render whichever settings tab is open so toggles visually update
+  const advTab = document.getElementById('tab-advanced');
+  const setTab = document.getElementById('tab-settings');
+  if (advTab && advTab.classList.contains('active') && typeof renderAdvanced === 'function') renderAdvanced();
+  else if (setTab && setTab.classList.contains('active') && typeof renderSettings === 'function') renderSettings();
+  // For some keys, also re-render the entire app (member labels affect everywhere)
+  if (key === 'currencyPosition' || key === 'decimalPlaces' || key === 'thousandsSeparator' || key === 'negativeStyle') reRenderAll();
 }
 function applyCustomCSS() {
   _ensureSettingsSchema();
