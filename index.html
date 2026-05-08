@@ -695,7 +695,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 <div id="tab-lookup" class="tab">
   <div class="notice">🔍 Full member lookup — every payment, every detail.</div>
   <div class="toolbar">
-    <input id="lq" placeholder="Type member name…" style="max-width:340px">
+    <input id="lq" placeholder="Type member name…" autocomplete="off" style="max-width:340px">
   </div>
   <div id="l-result"></div>
 </div>
@@ -765,7 +765,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
         <strong>Step 1 — Set up once:</strong> Paste your Anthropic API key. Saved only in this browser.
         <div style="margin-top:8px"><a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#2d6a9f">Get your API key →</a></div>
         <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <input id="api-key-input" type="password" placeholder="sk-ant-api03-..." style="flex:1;min-width:200px;padding:8px;border:1px solid #ccc;border-radius:5px;font-family:monospace;font-size:0.85rem">
+          <input id="api-key-input" type="password" autocomplete="new-password" placeholder="sk-ant-api03-..." style="flex:1;min-width:200px;padding:8px;border:1px solid #ccc;border-radius:5px;font-family:monospace;font-size:0.85rem">
           <button class="btn btn-green btn-sm" onclick="saveApiKey()">Save key</button>
         </div>
       </div>
@@ -2516,15 +2516,15 @@ function openAddPayment(preset) {
   document.getElementById('ov-pay-body').innerHTML =
     '<div class="mh"><h2>💰 Record Payment</h2><button class="mclose" onclick="closeOv(\'ov-pay\')">✕</button></div>' +
     '<div class="fgrid">' +
-    '<div class="fg"><label>Member *</label><select id="ap-name"><option value="">— Select —</option>' + opts + '</select></div>' +
-    '<div class="fg"><label>Date *</label><input id="ap-date" type="date" value="' + new Date().toISOString().slice(0, 10) + '"></div>' +
-    '<div class="fg"><label>Amount Paid (' + _curr() + ') *</label><input id="ap-amt" type="number" placeholder="0"></div>' +
-    '<div class="fg"><label>Method <span class="hint">(optional)</span></label><select id="ap-method"><option value="">—</option>' +
+    '<div class="fg"><label>Member *</label><select id="ap-name" autocomplete="off"><option value="">— Select —</option>' + opts + '</select></div>' +
+    '<div class="fg"><label>Date *</label><input id="ap-date" type="date" autocomplete="off" value="' + new Date().toISOString().slice(0, 10) + '"></div>' +
+    '<div class="fg"><label>Amount Paid (' + _curr() + ') *</label><input id="ap-amt" type="number" autocomplete="off" placeholder="0"></div>' +
+    '<div class="fg"><label>Method <span class="hint">(optional)</span></label><select id="ap-method" autocomplete="off"><option value="">—</option>' +
       (DB.settings.paymentMethods || []).map(pm => '<option value="' + esc(pm) + '">' + esc(pm) + '</option>').join('') +
     '</select></div>' +
     '<div class="fg" style="grid-column:1/-1"><label>Group(s) *</label>' + groupPickerHTML('ap-group-picker', '') + '</div>' +
-    '<div class="fg"><label>Current Balance</label><input id="ap-cur" type="number" readonly></div>' +
-    '<div class="fg"><label>New Balance (auto)</label><input id="ap-new" type="number" readonly><div id="ap-hint" class="hint"></div></div>' +
+    '<div class="fg"><label>Current Balance</label><input id="ap-cur" type="number" autocomplete="off" readonly></div>' +
+    '<div class="fg"><label>New Balance (auto)</label><input id="ap-new" type="number" autocomplete="off" readonly><div id="ap-hint" class="hint"></div></div>' +
     '</div>' +
     '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-pay\')">Cancel</button>' +
     '<button class="btn btn-green" onclick="savePayment()">💾 Save Payment</button></div>';
@@ -3643,6 +3643,39 @@ function _autoGrow(el) {
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
 }
+
+// v30: Stop Chrome's "Save password?" popup on payment recording.
+// Chrome heuristically treats text/number inputs near a password-type input
+// as a login form. We have password inputs in Advanced (sync key / passphrase)
+// and text inputs everywhere else. Tagging every input with autocomplete="off"
+// (and password inputs with autocomplete="new-password") tells Chrome these
+// aren't credentials to autofill or save.
+function _eg_disablePasswordManager(root) {
+  const scope = root || document;
+  scope.querySelectorAll('input, textarea, select').forEach(function(el) {
+    if (el.hasAttribute('autocomplete')) return; // respect explicit values
+    if (el.type === 'password') {
+      el.setAttribute('autocomplete', 'new-password');
+    } else {
+      el.setAttribute('autocomplete', 'off');
+    }
+    // 1Password / Bitwarden / LastPass extension hints:
+    el.setAttribute('data-1p-ignore', 'true');
+    el.setAttribute('data-lpignore', 'true');
+    el.setAttribute('data-form-type', 'other');
+  });
+}
+// Run once on initial load…
+_eg_disablePasswordManager();
+// …and again on every DOM mutation so dynamically-rendered modals
+// (payment, edit member, advanced, etc.) get the same treatment.
+new MutationObserver(function(mutations) {
+  for (const m of mutations) {
+    for (const node of m.addedNodes) {
+      if (node.nodeType === 1) _eg_disablePasswordManager(node);
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true });
 
 // Search input wiring
 document.addEventListener('DOMContentLoaded', function() {
@@ -5587,11 +5620,11 @@ function openCloudSyncWizard() {
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔑 Step 3: Paste your project credentials</summary>' +
       '<p style="font-size:0.85rem;color:#555;margin:6px 0">In your Supabase dashboard → <strong>Project Settings</strong> (gear icon, bottom of left sidebar) → <strong>API</strong> → copy these two values:</p>' +
       '<div class="fg" style="margin-bottom:8px"><label>Project URL</label><input type="text" id="sync-url" value="' + _escAttr(cfg.supabaseUrl || '') + '" placeholder="https://xxxxxxxxxxxx.supabase.co" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
-      '<div class="fg" style="margin-bottom:8px"><label>anon public key (long JWT)</label><input type="password" id="sync-key" value="' + _escAttr(cfg.supabaseAnonKey || '') + '" placeholder="eyJhbGciOi..." style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
+      '<div class="fg" style="margin-bottom:8px"><label>anon public key (long JWT)</label><input type="password" id="sync-key" autocomplete="new-password" value="' + _escAttr(cfg.supabaseAnonKey || '') + '" placeholder="eyJhbGciOi..." style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
     '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔐 Step 4: Choose a sync passphrase</summary>' +
       '<p style="font-size:0.85rem;color:#555;margin:6px 0">This is the password that <strong>encrypts your data</strong>. You\'ll need to enter the SAME passphrase on every device. <strong>If you lose it, your data is unrecoverable</strong> — the encryption is real.</p>' +
-      '<div class="fg"><label>Sync passphrase (8+ characters)</label><input type="password" id="sync-pass" value="' + _escAttr(cfg.syncPassphrase || '') + '" placeholder="Pick something memorable but strong" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.95rem"></div>' +
+      '<div class="fg"><label>Sync passphrase (8+ characters)</label><input type="password" id="sync-pass" autocomplete="new-password" value="' + _escAttr(cfg.syncPassphrase || '') + '" placeholder="Pick something memorable but strong" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.95rem"></div>' +
       '<div style="background:#fff3cd;padding:10px;border-radius:6px;font-size:0.78rem;color:#856404;margin-top:8px">⚠ <strong>WRITE THIS DOWN.</strong> If you forget the passphrase, all cloud-synced data becomes permanently inaccessible.</div>' +
     '</details>' +
     '<div class="factions" style="margin-top:14px">' +
@@ -6728,11 +6761,12 @@ function renderSettings() {
       const on = !!v;
       inp = '<label style="position:relative;display:inline-block;width:46px;height:24px"><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="setBackend(\'' + key + '\', this.checked)" style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;inset:0;background:' + (on ? '#27ae60' : '#ccc') + ';border-radius:24px;transition:0.25s"></span><span style="position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:18px;height:18px;background:#fff;border-radius:50%;transition:0.25s"></span></label>';
     } else if (type === 'textarea') {
-      inp = '<textarea id="' + id + '" rows="3" style="font-family:monospace;font-size:0.82rem" onchange="setBackend(\'' + key + '\', this.value)">' + esc(v || '') + '</textarea>';
+      inp = '<textarea id="' + id + '" rows="3" autocomplete="off" style="font-family:monospace;font-size:0.82rem" onchange="setBackend(\'' + key + '\', this.value)">' + esc(v || '') + '</textarea>';
     } else if (type === 'number') {
-      inp = '<input id="' + id + '" type="number" value="' + (v || 0) + '" onchange="setBackend(\'' + key + '\', parseFloat(this.value)||0)">';
+      inp = '<input id="' + id + '" type="number" autocomplete="off" value="' + (v || 0) + '" onchange="setBackend(\'' + key + '\', parseFloat(this.value)||0)">';
     } else {
-      inp = '<input id="' + id + '" type="' + (type === 'password' ? 'password' : 'text') + '" value="' + _escAttr(v || '') + '" onchange="setBackend(\'' + key + '\', this.value)" placeholder="' + (type === 'password' ? '••••••••' : '') + '">';
+      const ac = (type === 'password') ? 'new-password' : 'off';
+      inp = '<input id="' + id + '" type="' + (type === 'password' ? 'password' : 'text') + '" autocomplete="' + ac + '" value="' + _escAttr(v || '') + '" onchange="setBackend(\'' + key + '\', this.value)" placeholder="' + (type === 'password' ? '••••••••' : '') + '">';
     }
     return '<div class="fg" style="margin-bottom:10px"><label>' + label + '</label>' + inp + (hint ? '<div class="hint">' + hint + '</div>' : '') + '</div>';
   };
@@ -6869,11 +6903,12 @@ function renderAdvanced() {
       const on = !!v;
       inp = '<label style="position:relative;display:inline-block;width:46px;height:24px"><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="setBackend(\'' + key + '\', this.checked)" style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;inset:0;background:' + (on ? '#27ae60' : '#ccc') + ';border-radius:24px;transition:0.25s"></span><span style="position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:18px;height:18px;background:#fff;border-radius:50%;transition:0.25s"></span></label>';
     } else if (type === 'textarea') {
-      inp = '<textarea id="' + id + '" rows="3" style="font-family:monospace;font-size:0.82rem;padding:8px;border:1px solid #ccc;border-radius:6px;width:100%" onchange="setBackend(\'' + key + '\', this.value)">' + esc(v || '') + '</textarea>';
+      inp = '<textarea id="' + id + '" rows="3" autocomplete="off" style="font-family:monospace;font-size:0.82rem;padding:8px;border:1px solid #ccc;border-radius:6px;width:100%" onchange="setBackend(\'' + key + '\', this.value)">' + esc(v || '') + '</textarea>';
     } else if (type === 'number') {
-      inp = '<input id="' + id + '" type="number" value="' + (v != null ? v : 0) + '" onchange="setBackend(\'' + key + '\', parseFloat(this.value)||0)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">';
+      inp = '<input id="' + id + '" type="number" autocomplete="off" value="' + (v != null ? v : 0) + '" onchange="setBackend(\'' + key + '\', parseFloat(this.value)||0)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">';
     } else {
-      inp = '<input id="' + id + '" type="' + (type === 'password' ? 'password' : 'text') + '" value="' + _escAttr(v || '') + '" onchange="setBackend(\'' + key + '\', this.value)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">';
+      const ac2 = (type === 'password') ? 'new-password' : 'off';
+      inp = '<input id="' + id + '" type="' + (type === 'password' ? 'password' : 'text') + '" autocomplete="' + ac2 + '" value="' + _escAttr(v || '') + '" onchange="setBackend(\'' + key + '\', this.value)" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.9rem">';
     }
     return '<div class="fg" style="margin-bottom:12px"><label style="font-weight:600;color:#444;font-size:0.85rem">' + label + '</label>' + inp + (hint ? '<div class="hint" style="font-size:0.78rem;color:#888;margin-top:4px">' + hint + '</div>' : '') + '</div>';
   };
