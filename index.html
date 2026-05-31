@@ -1982,26 +1982,46 @@ function backToGroups() {
 }
 
 /* ============ CHARGE EVERYONE IN A GROUP ============ */
-// v25: Show the right group-action button(s) based on prepay mode setting
-// v30: Always include "Charge for Month" — bills X classes × per-class amount in one shot.
+// v25: prepayMode toggle changes which button is primary.
+// v30: ALWAYS show all three actions on every group card, regardless of prepay mode:
+//   1. 💳 Charge Everyone (single class — primary in default mode)
+//   2. 📅 Charge for Month (bulk — N classes × per-class amount)
+//   3. 💸 Class Canceled (credit back — needed any time you billed ahead and a class drops)
+// The "Class Canceled" button used to be hidden unless prepayMode was ON, which left
+// no way to refund a canceled class after using "Charge for Month". Fixed.
 function _groupActionButton(gName, location) {
   const prepay = !!(DB.settings.backend && DB.settings.backend.prepayMode);
   const isCard = location === 'card';
-  const baseStyle = isCard ? 'style="margin-top:10px;width:100%"' : '';
-  const monthBtn = '<button class="btn btn-blue ' + (isCard ? 'btn-sm' : '') + '"' +
-    (isCard ? ' style="margin-top:6px;width:100%"' : '') +
-    ' onclick="openMonthlyChargeGroup(\'' + esc(gName) + '\')" title="Charge each member for several classes at once — typical 1st-of-month workflow">📅 Charge for Month</button>';
-  if (!prepay) {
-    return '<button class="btn btn-orange btn-sm" ' + baseStyle + ' onclick="openChargeGroup(\'' + esc(gName) + '\')">💳 Charge Everyone</button>' + monthBtn;
-  }
-  // Prepay mode: members are pre-paid. Show options.
+
+  // Three buttons. Primary varies by mode, but all three always visible.
+  const btnCharge =
+    '<button class="btn btn-orange ' + (isCard ? 'btn-sm' : '') + '" ' +
+    (isCard ? 'style="flex:1"' : '') +
+    ' onclick="openChargeGroup(\'' + esc(gName) + '\')" title="Bill everyone for ONE class">💳 Charge Everyone</button>';
+  const btnMonth =
+    '<button class="btn btn-blue ' + (isCard ? 'btn-sm' : '') + '" ' +
+    (isCard ? 'style="flex:1"' : '') +
+    ' onclick="openMonthlyChargeGroup(\'' + esc(gName) + '\')" title="Bill everyone for several classes at once — typical 1st-of-month workflow">📅 Charge for Month</button>';
+  const btnCredit =
+    '<button class="btn btn-red ' + (isCard ? 'btn-sm' : '') + '" ' +
+    (isCard ? 'style="flex:1"' : '') +
+    ' onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — refund one class fee to everyone (use this when you already billed for the month and a class drops)">💸 Class Canceled</button>';
+
   if (isCard) {
-    return '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">' +
-      '<button class="btn btn-red btn-sm" style="flex:1" onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — give credit back to everyone">💸 Class Canceled</button>' +
-      '<button class="btn btn-gray btn-sm" onclick="openChargeGroup(\'' + esc(gName) + '\')" title="Add an extra charge to everyone (rare)">+ Charge</button>' +
-    '</div>' + monthBtn;
+    // Group card layout: stacked, full-width, primary first.
+    if (prepay) {
+      // Pre-pay shop: Credit is primary (members already paid).
+      return '<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">' +
+        btnCredit + btnMonth + btnCharge +
+      '</div>';
+    }
+    return '<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">' +
+      btnCharge + btnMonth + btnCredit +
+    '</div>';
   }
-  return '<button class="btn btn-red" onclick="openCreditGroup(\'' + esc(gName) + '\')">💸 Class Canceled — Credit Everyone</button> <button class="btn btn-gray" onclick="openChargeGroup(\'' + esc(gName) + '\')">+ Extra Charge</button> ' + monthBtn;
+  // Header (inside a group detail page) — inline buttons.
+  if (prepay) return btnCredit + ' ' + btnMonth + ' ' + btnCharge;
+  return btnCharge + ' ' + btnMonth + ' ' + btnCredit;
 }
 
 // v30: Charge for the Month — multiplies per-class amount × N classes for every active member.
