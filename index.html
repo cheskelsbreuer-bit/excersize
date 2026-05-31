@@ -1983,17 +1983,37 @@ function backToGroups() {
 
 /* ============ CHARGE EVERYONE IN A GROUP ============ */
 // v25: prepayMode toggle changes which button is primary.
-// v30: ALWAYS show all three actions on every group card, regardless of prepay mode:
-//   1. 💳 Charge Everyone (single class — primary in default mode)
-//   2. 📅 Charge for Month (bulk — N classes × per-class amount)
-//   3. 💸 Class Canceled (credit back — needed any time you billed ahead and a class drops)
-// The "Class Canceled" button used to be hidden unless prepayMode was ON, which left
-// no way to refund a canceled class after using "Charge for Month". Fixed.
+// v30: Three group-card actions, but "Class Canceled" is CONDITIONAL —
+// it only appears when there's an outstanding monthly bill (or prepay mode
+// is on globally). Per-class workflow doesn't need a credit button because
+// you simply don't click "Charge Everyone" on a canceled day.
+//
+//   1. 💳 Charge Everyone   — always visible (bill one class)
+//   2. 📅 Charge for Month  — always visible (bill several at once)
+//   3. 💸 Class Canceled    — only visible if prepayMode OR this group has
+//                             an active monthly bill for the current month.
+//                             Shows up the moment you click "Charge for
+//                             Month" and stays for the rest of that month.
+
+// v30 helper: did we monthly-bill this group during the current calendar month?
+function _hasActiveMonthlyBill(gName) {
+  if (!Array.isArray(DB.classes) || !gName) return false;
+  const now = new Date();
+  const monthLabel = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const target = gName.toLowerCase();
+  return DB.classes.some(c =>
+    c && c.monthly &&
+    c.day && c.day.toLowerCase() === target &&
+    c.monthLabel === monthLabel
+  );
+}
+
 function _groupActionButton(gName, location) {
   const prepay = !!(DB.settings.backend && DB.settings.backend.prepayMode);
   const isCard = location === 'card';
+  const monthlyActive = _hasActiveMonthlyBill(gName);
+  const showCredit = prepay || monthlyActive;
 
-  // Three buttons. Primary varies by mode, but all three always visible.
   const btnCharge =
     '<button class="btn btn-orange ' + (isCard ? 'btn-sm' : '') + '" ' +
     (isCard ? 'style="flex:1"' : '') +
@@ -2002,13 +2022,14 @@ function _groupActionButton(gName, location) {
     '<button class="btn btn-blue ' + (isCard ? 'btn-sm' : '') + '" ' +
     (isCard ? 'style="flex:1"' : '') +
     ' onclick="openMonthlyChargeGroup(\'' + esc(gName) + '\')" title="Bill everyone for several classes at once — typical 1st-of-month workflow">📅 Charge for Month</button>';
-  const btnCredit =
-    '<button class="btn btn-red ' + (isCard ? 'btn-sm' : '') + '" ' +
-    (isCard ? 'style="flex:1"' : '') +
-    ' onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — refund one class fee to everyone (use this when you already billed for the month and a class drops)">💸 Class Canceled</button>';
+  const btnCredit = showCredit
+    ? '<button class="btn btn-red ' + (isCard ? 'btn-sm' : '') + '" ' +
+      (isCard ? 'style="flex:1"' : '') +
+      ' onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — refund one class fee to everyone (you already pre-billed this month)">💸 Class Canceled</button>'
+    : '';
 
   if (isCard) {
-    // Group card layout: stacked, full-width, primary first.
+    // Stacked, full-width inside the card.
     if (prepay) {
       // Pre-pay shop: Credit is primary (members already paid).
       return '<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">' +
@@ -2019,7 +2040,7 @@ function _groupActionButton(gName, location) {
       btnCharge + btnMonth + btnCredit +
     '</div>';
   }
-  // Header (inside a group detail page) — inline buttons.
+  // Header inside the group-detail page — inline.
   if (prepay) return btnCredit + ' ' + btnMonth + ' ' + btnCharge;
   return btnCharge + ' ' + btnMonth + ' ' + btnCredit;
 }
