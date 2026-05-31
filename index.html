@@ -1983,21 +1983,149 @@ function backToGroups() {
 
 /* ============ CHARGE EVERYONE IN A GROUP ============ */
 // v25: Show the right group-action button(s) based on prepay mode setting
+// v30: Always include "Charge for Month" — bills X classes × per-class amount in one shot.
 function _groupActionButton(gName, location) {
   const prepay = !!(DB.settings.backend && DB.settings.backend.prepayMode);
   const isCard = location === 'card';
   const baseStyle = isCard ? 'style="margin-top:10px;width:100%"' : '';
+  const monthBtn = '<button class="btn btn-blue ' + (isCard ? 'btn-sm' : '') + '"' +
+    (isCard ? ' style="margin-top:6px;width:100%"' : '') +
+    ' onclick="openMonthlyChargeGroup(\'' + esc(gName) + '\')" title="Charge each member for several classes at once — typical 1st-of-month workflow">📅 Charge for Month</button>';
   if (!prepay) {
-    return '<button class="btn btn-orange btn-sm" ' + baseStyle + ' onclick="openChargeGroup(\'' + esc(gName) + '\')">💳 Charge Everyone</button>';
+    return '<button class="btn btn-orange btn-sm" ' + baseStyle + ' onclick="openChargeGroup(\'' + esc(gName) + '\')">💳 Charge Everyone</button>' + monthBtn;
   }
-  // Prepay mode: members are pre-paid. Show two options.
+  // Prepay mode: members are pre-paid. Show options.
   if (isCard) {
     return '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">' +
       '<button class="btn btn-red btn-sm" style="flex:1" onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — give credit back to everyone">💸 Class Canceled</button>' +
       '<button class="btn btn-gray btn-sm" onclick="openChargeGroup(\'' + esc(gName) + '\')" title="Add an extra charge to everyone (rare)">+ Charge</button>' +
-    '</div>';
+    '</div>' + monthBtn;
   }
-  return '<button class="btn btn-red" onclick="openCreditGroup(\'' + esc(gName) + '\')">💸 Class Canceled — Credit Everyone</button> <button class="btn btn-gray" onclick="openChargeGroup(\'' + esc(gName) + '\')">+ Extra Charge</button>';
+  return '<button class="btn btn-red" onclick="openCreditGroup(\'' + esc(gName) + '\')">💸 Class Canceled — Credit Everyone</button> <button class="btn btn-gray" onclick="openChargeGroup(\'' + esc(gName) + '\')">+ Extra Charge</button> ' + monthBtn;
+}
+
+// v30: Charge for the Month — multiplies per-class amount × N classes for every active member.
+// Use case: at the start of the month, bill each member for the 4 (or whatever) classes coming up.
+// Each member's individual per-class amount + family/individual discounts are applied correctly.
+function openMonthlyChargeGroup(gName) {
+  const arc = archivedSet();
+  const members = DB.members.filter(m =>
+    !arc.has(m.name) && m.active && !isCurrentlyPaused(m.name) &&
+    m.group && m.group.toLowerCase().includes(gName.toLowerCase())
+  ).sort((a, b) => a.name.localeCompare(b.name));
+  if (!members.length) { alert('No active members in ' + gName + '.'); return; }
+
+  const dpc = _defaultPerClass();
+  const today = new Date();
+  const monthLabel = today.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const defaultN = 4;
+
+  function renderRows(n) {
+    return members.map(m => {
+      const perClass = m.amountPerClass || dpc;
+      const lineAmt = _applyAllDiscounts(m, perClass * n);
+      return '<tr>' +
+        '<td><input type="checkbox" class="mchg-check" data-name="' + esc(m.name) + '" data-perclass="' + perClass + '" checked></td>' +
+        '<td><strong>' + esc(m.name) + '</strong></td>' +
+        '<td>' + _money(perClass) + '</td>' +
+        '<td>' + balHTML(m.balance) + '</td>' +
+        '<td style="color:#888">→</td>' +
+        '<td><strong>' + _money(lineAmt) + '</strong></td>' +
+        '<td>' + balHTML((m.balance || 0) + lineAmt) + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  document.getElementById('ov-charge-body').innerHTML =
+    '<div class="mh"><h2>📅 Charge for the Month — ' + esc(gName) + ' Group</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<p style="color:#555;font-size:0.88rem;margin-bottom:14px;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f">Bills every active member in this group for several classes at once. Each member is charged their own per-class amount × number of classes. Family + individual discounts auto-applied. Typical 1st-of-month workflow.</p>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>Billing month</label><input id="mchg-month" type="text" value="' + monthLabel + '" placeholder="e.g. ' + monthLabel + '"></div>' +
+      '<div class="fg"><label>Number of classes this month *</label><input id="mchg-n" type="number" min="1" max="31" value="' + defaultN + '" oninput="updateMonthlyChargePreview()"></div>' +
+    '</div>' +
+    '<div style="margin-top:16px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+        '<strong style="font-size:0.88rem">' + members.length + ' active members</strong>' +
+        '<div><button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.mchg-check\').forEach(c=>c.checked=true);updateMonthlyChargePreview()">Select All</button> ' +
+        '<button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.mchg-check\').forEach(c=>c.checked=false);updateMonthlyChargePreview()">Select None</button></div>' +
+      '</div>' +
+      '<div class="tw" style="max-height:360px;overflow-y:auto"><table>' +
+        '<thead><tr><th>Charge?</th><th>Name</th><th>/class</th><th>Current</th><th></th><th>This month</th><th>After</th></tr></thead>' +
+        '<tbody id="mchg-tbody">' + renderRows(defaultN) + '</tbody>' +
+      '</table></div>' +
+      '<div id="mchg-total" style="margin-top:10px;text-align:right;font-size:1.05rem"></div>' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
+      '<button class="btn btn-blue" onclick="confirmMonthlyChargeGroup(\'' + esc(gName) + '\')">📅 Bill Selected for the Month</button>' +
+    '</div>';
+  openOv('ov-charge');
+  updateMonthlyChargePreview();
+}
+
+function updateMonthlyChargePreview() {
+  const n = parseInt(document.getElementById('mchg-n').value) || 0;
+  let grand = 0;
+  document.querySelectorAll('.mchg-check').forEach(cb => {
+    const row = cb.closest('tr');
+    const name = cb.getAttribute('data-name');
+    const perClass = parseFloat(cb.getAttribute('data-perclass')) || 0;
+    const m = DB.members.find(x => x.name === name);
+    if (!m) return;
+    const lineAmt = cb.checked ? _applyAllDiscounts(m, perClass * n) : 0;
+    if (cb.checked) grand += lineAmt;
+    const cells = row.querySelectorAll('td');
+    cells[5].innerHTML = cb.checked ? '<strong>' + _money(lineAmt) + '</strong>' : '<em style="color:#aaa">skipped</em>';
+    cells[6].innerHTML = cb.checked ? balHTML((m.balance || 0) + lineAmt) : balHTML(m.balance || 0);
+  });
+  const totalDiv = document.getElementById('mchg-total');
+  if (totalDiv) totalDiv.innerHTML = 'Total to be billed: <strong>' + _money(grand) + '</strong>';
+}
+
+function confirmMonthlyChargeGroup(gName) {
+  const n = parseInt(document.getElementById('mchg-n').value);
+  if (!n || n < 1 || n > 31) { alert('Number of classes must be between 1 and 31.'); return; }
+  const monthLabel = (document.getElementById('mchg-month').value || '').trim() || (new Date().toLocaleString('default', { month: 'long', year: 'numeric' }));
+  const checked = [...document.querySelectorAll('.mchg-check:checked')];
+  if (!checked.length) { alert('No members selected.'); return; }
+
+  let grand = 0;
+  const details = checked.map(cb => {
+    const name = cb.getAttribute('data-name');
+    const perClass = parseFloat(cb.getAttribute('data-perclass')) || 0;
+    const m = DB.members.find(x => x.name === name);
+    if (!m) return null;
+    const lineAmt = _applyAllDiscounts(m, perClass * n);
+    grand += lineAmt;
+    return { m, lineAmt };
+  }).filter(Boolean);
+
+  if (!confirm('Bill ' + checked.length + ' members in ' + gName + ' for ' + n + ' class(es) (' + monthLabel + ')?\n\nTotal: ' + _money(grand))) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Monthly bill ' + gName + ' × ' + n);
+
+  details.forEach(({ m, lineAmt }) => {
+    m.balance = (m.balance || 0) + lineAmt;
+    m.totalOwed = (m.totalOwed || 0) + lineAmt;
+    m.totalClasses = (m.totalClasses || 0) + n;
+  });
+
+  if (!DB.classes) DB.classes = [];
+  DB.classes.unshift({
+    date: new Date().toISOString().slice(0, 10),
+    day: gName,
+    monthly: true,
+    monthLabel: monthLabel,
+    classCount: n,
+    count: checked.length,
+    amount: grand,
+    savedAt: Date.now(),
+  });
+  logAction('payment', 'monthly', 'Monthly bill ' + gName + ' × ' + n + ' (' + monthLabel + ') — ' + checked.length + ' members, ' + _money(grand));
+
+  closeOv('ov-charge');
+  saveDB();
+  reRenderAll();
+  alert('📅 Billed ' + checked.length + ' members in ' + gName + ' for ' + n + ' classes (' + monthLabel + '). Total: ' + _money(grand));
 }
 
 // v25: Credit Everyone — for canceled class days when in prepay mode
@@ -2082,8 +2210,10 @@ function openChargeGroup(gName) {
   ).sort((a, b) => a.name.localeCompare(b.name));
 
   const today = new Date().toISOString().slice(0, 10);
+  // v30 BUGFIX: was hardcoded +15. Now uses default per-class so initial preview matches reality.
+  const _dpcInit = _defaultPerClass();
   let listHTML = members.map((m, i) => {
-    const newBal = m.balance + 15;
+    const newBal = (m.balance || 0) + _applyAllDiscounts(m, _dpcInit);
     const cur = balHTML(m.balance);
     const future = balHTML(newBal);
     return '<tr>' +
@@ -8010,7 +8140,17 @@ window.addEventListener('beforeunload', function(ev) {
   }
 });
 // v24: auto-archive on load (only if user enabled it via threshold > 0)
-setTimeout(() => { try { _runAutoArchive(); } catch (e) { console.warn('Auto-archive error:', e); } }, 1500);
+// v30 BUGFIX: same race as recurring billing — sync must finish first so we don't archive
+// members based on stale "last paid" data, then push the stale archive decision to cloud.
+setTimeout(async function() {
+  try {
+    const cfg = (DB.settings && DB.settings.backend) || {};
+    if (cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase) {
+      try { await syncNow('auto', { silent: true }); } catch (e) {}
+    }
+    _runAutoArchive();
+  } catch (e) { console.warn('Auto-archive error:', e); }
+}, 1800);
 // v24: Run user's custom JS hook (sandbox-free — they own this code)
 setTimeout(() => {
   try {
@@ -8038,8 +8178,22 @@ if (_maybeRenderStatementHash()) {
 _maybeAutoDarkMode();
 setInterval(_maybeAutoDarkMode, 10 * 60 * 1000);
 
-// v21: run recurring billing engine on every load (idempotent — only charges if due + not yet charged this month)
-setTimeout(function() { try { _runRecurringBilling(); } catch (e) { console.warn('Recurring billing error:', e); } }, 500);
+// v30 BUGFIX: Recurring billing MUST run AFTER cloud sync completes — not before.
+// Old code ran at 500ms, before sync at 1500ms. If Browser A charged at 12:01am and
+// Browser B opened at 9am with stale local data, B would charge everyone AGAIN before
+// pulling A's update, then push the double-charge to cloud. Permanent corruption.
+// Fix: wait for the initial sync to finish, then run recurring billing.
+setTimeout(async function() {
+  try {
+    const cfg = (DB.settings && DB.settings.backend) || {};
+    if (cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase) {
+      // Wait for the initial sync to complete, so lastChargedYM reflects what other
+      // devices have already done this month. syncNow is idempotent + dedup'd in-flight.
+      try { await syncNow('auto', { silent: true }); } catch (e) { console.warn('Pre-billing sync failed:', e); }
+    }
+    _runRecurringBilling();
+  } catch (e) { console.warn('Recurring billing error:', e); }
+}, 1800); // 300ms after the 1500ms initial sync kicks off, so we don't double-pull
 
 // v21: check backup reminder banner on load + every hour
 setTimeout(_checkBackupReminder, 800);
