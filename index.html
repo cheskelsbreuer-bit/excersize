@@ -1996,15 +1996,22 @@ function backToGroups() {
 //                             Month" and stays for the rest of that month.
 
 // v30 helper: did we monthly-bill this group during the current calendar month?
+// Uses a stable YYYY-MM key (not the locale-dependent display string), so the
+// detection works across devices in different languages and survives the user
+// editing the friendly month label.
+function _monthKey(d) {
+  d = d || new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
 function _hasActiveMonthlyBill(gName) {
   if (!Array.isArray(DB.classes) || !gName) return false;
-  const now = new Date();
-  const monthLabel = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const key = _monthKey();
   const target = gName.toLowerCase();
   return DB.classes.some(c =>
     c && c.monthly &&
     c.day && c.day.toLowerCase() === target &&
-    c.monthLabel === monthLabel
+    // Prefer stable monthKey; fall back to legacy monthLabel for older entries.
+    (c.monthKey ? c.monthKey === key : c.monthLabel && c.monthLabel.toLowerCase().includes(String(new Date().getFullYear())))
   );
 }
 
@@ -2082,7 +2089,7 @@ function openMonthlyChargeGroup(gName) {
     '<p style="color:#555;font-size:0.88rem;margin-bottom:14px;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f">Bills every active member in this group for several classes at once. Each member is charged their own per-class amount × number of classes. Family + individual discounts auto-applied. Typical 1st-of-month workflow.</p>' +
     '<div class="fgrid">' +
       '<div class="fg"><label>Billing month</label><input id="mchg-month" type="text" value="' + monthLabel + '" placeholder="e.g. ' + monthLabel + '"></div>' +
-      '<div class="fg"><label>Number of classes this month *</label><input id="mchg-n" type="number" min="1" max="31" value="' + defaultN + '" oninput="updateMonthlyChargePreview()"></div>' +
+      '<div class="fg"><label>Number of classes this month *</label><input id="mchg-n" type="number" min="1" max="8" value="' + defaultN + '" oninput="updateMonthlyChargePreview()"></div>' +
     '</div>' +
     '<div style="margin-top:16px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
@@ -2125,10 +2132,32 @@ function updateMonthlyChargePreview() {
 
 function confirmMonthlyChargeGroup(gName) {
   const n = parseInt(document.getElementById('mchg-n').value);
-  if (!n || n < 1 || n > 31) { alert('Number of classes must be between 1 and 31.'); return; }
+  // v30 BUGFIX: tighter cap (8 instead of 31). A class group hits 4-5 classes/month
+  // typically; >8 is almost certainly a typo. Catches an extra-digit fat-finger.
+  if (!n || n < 1 || n > 8) { alert('Number of classes must be between 1 and 8 (typo guard).'); return; }
   const monthLabel = (document.getElementById('mchg-month').value || '').trim() || (new Date().toLocaleString('default', { month: 'long', year: 'numeric' }));
+  const monthKey = _monthKey(); // stable YYYY-MM for dedupe/detection
   const checked = [...document.querySelectorAll('.mchg-check:checked')];
   if (!checked.length) { alert('No members selected.'); return; }
+
+  // v30 BUGFIX: anti-duplicate-bill check — copies pattern from openChargeGroup smart warnings.
+  // If "Smart warnings" is enabled (default), warn before billing the same group twice in
+  // the same calendar month.
+  const _smartOn = !(DB.settings && DB.settings.backend && DB.settings.backend.smartChargeWarn === false);
+  if (_smartOn) {
+    const existing = (DB.classes || []).find(c =>
+      c && c.monthly &&
+      c.day && c.day.toLowerCase() === gName.toLowerCase() &&
+      (c.monthKey === monthKey || c.monthLabel === monthLabel)
+    );
+    if (existing) {
+      if (!confirm(
+        '⚠ The ' + gName + ' group was already billed for this month (' + monthLabel + ').\n\n' +
+        'Previous bill: ' + (existing.classCount || '?') + ' classes × ' + (existing.count || '?') + ' members = ' + _money(existing.amount || 0) + '\n\n' +
+        'Billing again will charge each member AGAIN. Are you absolutely sure?'
+      )) return;
+    }
+  }
 
   let grand = 0;
   const details = checked.map(cb => {
@@ -2155,7 +2184,8 @@ function confirmMonthlyChargeGroup(gName) {
     date: new Date().toISOString().slice(0, 10),
     day: gName,
     monthly: true,
-    monthLabel: monthLabel,
+    monthKey: monthKey,        // stable, locale-independent key
+    monthLabel: monthLabel,    // human-readable label
     classCount: n,
     count: checked.length,
     amount: grand,
