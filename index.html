@@ -642,7 +642,10 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 <!-- GROUPS -->
 <div id="tab-groups" class="tab">
   <div id="gcards-wrap">
-    <div class="notice">🗂 Click any group to see all <strong>active</strong> members in that class. Paused and former members are not counted.</div>
+    <div class="notice" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <span>🗂 Click any group to see all <strong>active</strong> members in that class. Paused and former members are not counted.</span>
+      <button class="btn btn-gray btn-sm" onclick="openBillingHistory()">📋 Billing History</button>
+    </div>
     <div class="gcards" id="gcards"></div>
   </div>
   <div id="gdetail" style="display:none">
@@ -820,6 +823,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 <div class="overlay" id="ov-charge"><div class="modal" id="ov-charge-body"></div></div>
 <div class="overlay" id="ov-theme"><div class="modal" id="ov-theme-body"></div></div>
 <div class="overlay" id="ov-cf"><div class="modal" id="ov-cf-body"></div></div>
+<div class="overlay" id="ov-billing-history"><div class="modal" id="ov-billing-history-body"></div></div>
 <button id="tour-fab" onclick="startTour()" title="Take the tour">🎓</button>
 
 <script>
@@ -2199,6 +2203,68 @@ function confirmMonthlyChargeGroup(gName) {
   alert('📅 Billed ' + checked.length + ' members in ' + gName + ' for ' + n + ' classes (' + monthLabel + '). Total: ' + _money(grand));
 }
 
+// v31: Monthly Billing History — shows all past "Charge for Month" charges grouped by month
+function openBillingHistory() {
+  const records = (DB.classes || []).filter(c => c && c.monthly);
+
+  let html = '<div class="mh"><h2>📋 Monthly Billing History</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+
+  if (!records.length) {
+    html += '<p style="color:#888;margin:20px 0;text-align:center">No monthly billing records yet.<br><small>Use "Charge for Month" on any group card to create the first one.</small></p>';
+    html += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+    document.getElementById('ov-billing-history-body').innerHTML = html;
+    openOv('ov-billing-history');
+    return;
+  }
+
+  // Group by monthKey (or date prefix if no monthKey)
+  const byMonth = {};
+  records.forEach(c => {
+    const mk = c.monthKey || (c.date ? c.date.slice(0, 7) : 'unknown');
+    if (!byMonth[mk]) byMonth[mk] = [];
+    byMonth[mk].push(c);
+  });
+  const months = Object.keys(byMonth).sort().reverse(); // newest first
+
+  let grandTotal = 0;
+  let body = '';
+  months.forEach(mk => {
+    const rows = byMonth[mk];
+    // Use the most recent row's monthLabel for the header
+    const label = rows[0].monthLabel || mk;
+    const monthTotal = rows.reduce((s, r) => s + (r.amount || 0), 0);
+    grandTotal += monthTotal;
+
+    body += '<div style="margin-bottom:20px">';
+    body += '<div style="display:flex;align-items:center;justify-content:space-between;background:#1a3a5c;color:#fff;padding:10px 14px;border-radius:8px 8px 0 0;font-weight:700">';
+    body += '<span>📅 ' + esc(label) + '</span>';
+    body += '<span>' + _money(monthTotal) + ' total</span>';
+    body += '</div>';
+    body += '<div class="tw"><table style="margin:0;border-radius:0 0 8px 8px;overflow:hidden">';
+    body += '<thead><tr><th>Group</th><th>Classes</th><th>Members billed</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
+    rows.sort((a, b) => (a.day || '').localeCompare(b.day || '')).forEach(r => {
+      body += '<tr>';
+      body += '<td><strong>' + esc(r.day || '—') + '</strong></td>';
+      body += '<td>' + (r.classCount || '?') + '</td>';
+      body += '<td>' + (r.count || '?') + '</td>';
+      body += '<td><strong>' + _money(r.amount || 0) + '</strong></td>';
+      body += '<td style="color:#888;font-size:0.82rem">' + (r.date || '—') + '</td>';
+      body += '</tr>';
+    });
+    body += '</tbody></table></div></div>';
+  });
+
+  html += '<div style="background:#eaf3fb;border-left:4px solid #2d6a9f;padding:10px 14px;border-radius:6px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">';
+  html += '<span style="font-size:0.88rem;color:#555">' + records.length + ' billing event(s) across ' + months.length + ' month(s)</span>';
+  html += '<span style="font-weight:700;font-size:1.1rem">All-time: ' + _money(grandTotal) + '</span>';
+  html += '</div>';
+  html += '<div style="max-height:500px;overflow-y:auto">' + body + '</div>';
+  html += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+
+  document.getElementById('ov-billing-history-body').innerHTML = html;
+  openOv('ov-billing-history');
+}
+
 // v25: Credit Everyone — for canceled class days when in prepay mode
 function openCreditGroup(gName) {
   const arc = archivedSet();
@@ -2460,8 +2526,10 @@ function archiveMember(name) {
   // End any active pauses
   DB.paused = DB.paused.filter(p => !(p.name === name && p.stillPaused));
   m.active = false;
+  m.endDate = m.endDate || todayStr(); // v31: set endDate so archive state is consistent
+  delete m.restoredAt; // clear restore immunity if they're being re-archived
   if (!DB.archived.find(a => a.name === name)) {
-    DB.archived.push({ name: m.name, group: m.group, balance: m.balance, archivedDate: todayStr() });
+    DB.archived.push({ name: m.name, group: m.group, balance: m.balance, archivedDate: m.endDate });
   }
   logAction('archive', 'add', 'Archived member: ' + name + (m.balance !== 0 ? ' (balance ' + _money(m.balance) + ')' : ''));
   closeOv('ov-edit');
@@ -2477,11 +2545,12 @@ function restoreMember(name) {
   DB.archived = DB.archived.filter(a => a.name !== name);
   m.active = true;
   m.endDate = ''; // clear end date so she's truly active
+  m.restoredAt = Date.now(); // v31: immunity — auto-archive skips her for 60 days after restore
   if (setNewStart) {
     m.startDate = todayStr();
   }
   reRenderAll();
-  alert('✅ "' + name + '" restored to active.');
+  alert('✅ "' + name + '" restored to active. She\'s protected from auto-archive for 60 days.');
 }
 
 /* ============ PROFILE MODAL ============ */
@@ -5949,6 +6018,8 @@ function _runAutoArchive() {
   let archived = 0;
   DB.members.forEach(m => {
     if (!m.active) return;
+    // v31: skip members restored within the last 60 days — prevents immediate re-archive
+    if (m.restoredAt && Date.now() - m.restoredAt < 60 * 24 * 60 * 60 * 1000) return;
     const lastPay = (DB.payments || []).filter(p => p.name === m.name && p.paid).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
     const lastTs = lastPay ? new Date(lastPay.date).getTime() : (m.startDate ? new Date(m.startDate).getTime() : 0);
     if (lastTs < cutoff) {
