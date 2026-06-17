@@ -2514,13 +2514,13 @@ function archiveMember(name) {
   let extraWarning = '';
   let severity = 'low';
   if (m.balance > 50) {
-    extraWarning = '\n\n⚠ ' + name + ' currently OWES ' + _money(m.balance) + '. Archiving will write off this debt.';
+    extraWarning = '\n\n💡 ' + name + ' currently owes ' + _money(m.balance) + '. This balance is saved and will still show in Former Members. If you restore her later, she comes back with the same balance.';
     severity = 'medium';
   } else if (m.balance < -50) {
-    extraWarning = '\n\n⚠ ' + name + ' has CREDIT of ' + _money(Math.abs(m.balance)) + ' (paid in advance). Archiving means losing track of money owed back to them.';
+    extraWarning = '\n\n💡 ' + name + ' has a credit of ' + _money(Math.abs(m.balance)) + ' (paid in advance). This credit is saved and will still show in Former Members. If you restore her later, she comes back with the same credit.';
     severity = 'high';
   }
-  const msg = 'Archive "' + name + '"?\n\nShe will be moved to Former Members. All history preserved. Restorable anytime.' + extraWarning;
+  const msg = 'Archive "' + name + '"?\n\nShe will be moved to Former Members. All history and balance preserved. Restorable anytime.' + extraWarning;
   if (!_confirmRisky(msg, severity)) return;
   if (typeof _pushUndo === 'function') _pushUndo('Archive ' + name);
   // End any active pauses
