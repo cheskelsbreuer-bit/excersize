@@ -2526,8 +2526,9 @@ function archiveMember(name) {
   // End any active pauses
   DB.paused = DB.paused.filter(p => !(p.name === name && p.stillPaused));
   m.active = false;
-  m.endDate = m.endDate || todayStr(); // v31: set endDate so archive state is consistent
-  delete m.restoredAt; // clear restore immunity if they're being re-archived
+  m.endDate = m.endDate || todayStr();
+  delete m.restoredAt;
+  _clearRestoreProtect(name); // v32: intentional archive cancels sync-restore protection
   if (!DB.archived.find(a => a.name === name)) {
     DB.archived.push({ name: m.name, group: m.group, balance: m.balance, archivedDate: m.endDate });
   }
@@ -2538,19 +2539,63 @@ function archiveMember(name) {
   reRenderAll();
   alert('✅ "' + name + '" archived.');
 }
+// v32: Device-local restore protection — survives sync overwrites.
+// Stored outside the main DB so a cloud pull can't erase it.
+function _setRestoreProtect(name) {
+  try {
+    const p = JSON.parse(localStorage.getItem('eg_restoreProtect') || '{}');
+    p[name] = Date.now();
+    localStorage.setItem('eg_restoreProtect', JSON.stringify(p));
+  } catch (e) {}
+}
+function _clearRestoreProtect(name) {
+  try {
+    const p = JSON.parse(localStorage.getItem('eg_restoreProtect') || '{}');
+    delete p[name];
+    localStorage.setItem('eg_restoreProtect', JSON.stringify(p));
+  } catch (e) {}
+}
+// Called after every sync pull — re-applies any local restore decisions the cloud may have overwritten
+function _reapplyRestoreProtections() {
+  try {
+    const p = JSON.parse(localStorage.getItem('eg_restoreProtect') || '{}');
+    const sixtyDays = 60 * 24 * 60 * 60 * 1000;
+    let reapplied = 0;
+    const expired = [];
+    Object.entries(p).forEach(([name, ts]) => {
+      if (Date.now() - ts > sixtyDays) { expired.push(name); return; }
+      const m = (DB.members || []).find(x => x.name === name);
+      if (!m) return;
+      const wasArchived = (DB.archived || []).find(a => a.name === name);
+      if (wasArchived || !m.active || m.endDate) {
+        DB.archived = (DB.archived || []).filter(a => a.name !== name);
+        m.active = true;
+        m.endDate = '';
+        m.restoredAt = ts;
+        reapplied++;
+        console.log('[restore-protect] Re-applied restore for:', name);
+      }
+    });
+    expired.forEach(n => delete p[n]);
+    if (expired.length) localStorage.setItem('eg_restoreProtect', JSON.stringify(p));
+    return reapplied;
+  } catch (e) { return 0; }
+}
+
 function restoreMember(name) {
   const m = DB.members.find(x => x.name === name);
   if (!m) { alert('Member not found'); return; }
   const setNewStart = confirm('Restore "' + name + '" as active?\n\nClick OK to use today as her new start date.\nClick Cancel to keep her original start date.');
   DB.archived = DB.archived.filter(a => a.name !== name);
   m.active = true;
-  m.endDate = ''; // clear end date so she's truly active
-  m.restoredAt = Date.now(); // v31: immunity — auto-archive skips her for 60 days after restore
+  m.endDate = '';
+  m.restoredAt = Date.now();
+  _setRestoreProtect(name); // v32: device-local protection — survives cloud sync overwrites
   if (setNewStart) {
     m.startDate = todayStr();
   }
   reRenderAll();
-  alert('✅ "' + name + '" restored to active. She\'s protected from auto-archive for 60 days.');
+  alert('✅ "' + name + '" restored to active. Protected from being re-archived by sync or auto-archive for 60 days.');
 }
 
 /* ============ PROFILE MODAL ============ */
@@ -5731,6 +5776,8 @@ async function syncNow(direction, opts) {
       // Preserve a few device-only fields from local
       decrypted._savedAt = cloudTs;
       DB = decrypted;
+      // v32: re-apply any local restore decisions the cloud may have overwritten
+      _reapplyRestoreProtections();
       // Persist locally without re-triggering sync
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
       idbSet(STORAGE_KEY, DB).catch(() => {});
@@ -8302,6 +8349,7 @@ setTimeout(async function() {
       try { await syncNow('auto', { silent: true }); } catch (e) {}
     }
     _runAutoArchive();
+    _reapplyRestoreProtections(); // v32: don't let auto-archive undo a manual restore
   } catch (e) { console.warn('Auto-archive error:', e); }
 }, 1800);
 // v24: Run user's custom JS hook (sandbox-free — they own this code)
