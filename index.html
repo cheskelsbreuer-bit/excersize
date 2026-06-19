@@ -6021,7 +6021,18 @@ function _runAutoArchive() {
     // v31: skip members restored within the last 60 days — prevents immediate re-archive
     if (m.restoredAt && Date.now() - m.restoredAt < 60 * 24 * 60 * 60 * 1000) return;
     const lastPay = (DB.payments || []).filter(p => p.name === m.name && p.paid).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-    const lastTs = lastPay ? new Date(lastPay.date).getTime() : (m.startDate ? new Date(m.startDate).getTime() : 0);
+    // v31b: also check monthly billing (DB.classes) — "Charge for Month" records go there, not DB.payments.
+    // A member billed via monthly charge counts as "recently active" for auto-archive purposes.
+    const memberGroups = (m.group || '').toLowerCase().split(',').map(g => g.trim());
+    const lastMonthly = (DB.classes || [])
+      .filter(c => c && c.monthly && c.date && memberGroups.some(g => g === (c.day || '').toLowerCase().trim()))
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    const lastMonthlyTs = lastMonthly ? new Date(lastMonthly.date).getTime() : 0;
+    const lastTs = Math.max(
+      lastPay ? new Date(lastPay.date).getTime() : 0,
+      lastMonthlyTs,
+      m.startDate ? new Date(m.startDate).getTime() : 0
+    );
     if (lastTs < cutoff) {
       m.active = false;
       m.endDate = todayStr();
