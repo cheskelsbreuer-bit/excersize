@@ -942,6 +942,9 @@ function saveDB() {
     try {
       localStorage.setItem(STORAGE_KEY, serialized);
     } catch (e) {
+      if (e && e.name === 'QuotaExceededError') {
+        alert('⚠ Storage is full — your data could not be saved. Please export a backup and delete old payment records to free up space.');
+      }
       console.warn('localStorage save failed:', e);
     }
     // Also save to IndexedDB (survives file:// scenarios where localStorage fails)
@@ -1199,7 +1202,12 @@ function importBackup() {
         }
         if (!confirm('Import ' + parsed.members.length + ' members from this backup?\n\nThis will replace all current data.')) return;
         DB = parsed;
-        if (!DB.archived) DB.archived = [];
+        if (!Array.isArray(DB.members)) DB.members = [];
+        if (!Array.isArray(DB.payments)) DB.payments = [];
+        if (!Array.isArray(DB.classes)) DB.classes = [];
+        if (!Array.isArray(DB.archived)) DB.archived = [];
+        if (!Array.isArray(DB.paused)) DB.paused = [];
+        if (!Array.isArray(DB.tags)) DB.tags = [];
         if (!DB.notes) DB.notes = { combos: [] };
         // v20 BUGFIX: clean up returned-pause records that may exist in old backups
         if (Array.isArray(DB.paused)) {
@@ -1566,7 +1574,7 @@ function initDashboard() {
           '<td><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + m.name + '</a></td>' +
           '<td>' + m.group + '</td>' +
           '<td>' + balHTML(m.balance) + '</td>' +
-          '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
+          '<td>' + (lp ? lp.date + ' ($' + (parseFloat(lp.paid) || 0).toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
             (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>') +
             (m.phone ? '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')" title="Send reminder SMS">📱</button></span>' : '') +
@@ -1582,7 +1590,7 @@ function initDashboard() {
         '<tr>' +
         '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + p.name + '</a></td>' +
         '<td>' + p.date + '</td>' +
-        '<td><strong>$' + p.paid.toFixed(2) + '</strong></td>' +
+        '<td><strong>$' + (parseFloat(p.paid) || 0).toFixed(2) + '</strong></td>' +
         '<td>' + p.group + '</td>' +
         '<td>' + balHTML(p.balance) + '</td>' +
         '</tr>'
@@ -1637,15 +1645,16 @@ function filteredMembers() {
     if (arc.has(m.name)) return false;
     if (!m.active) return false;
     if (isCurrentlyPaused(m.name)) return false; // hide paused from main Members list
-    if (q && !m.name.toLowerCase().includes(q) && !m.group.toLowerCase().includes(q)) return false;
+    const mg = (m.group || '').toLowerCase();
+    if (q && !m.name.toLowerCase().includes(q) && !mg.includes(q)) return false;
     if (f === 'owes' && m.balance <= 0) return false;
     if (f === 'credit' && m.balance >= 0) return false;
     if (f === 'even' && m.balance !== 0) return false;
-    if (g && !m.group.toLowerCase().includes(g)) return false;
+    if (g && !mg.includes(g)) return false;
     return true;
   }).sort((a, b) => {
-    let av = a[mSort.f], bv = b[mSort.f];
-    if (typeof av === 'string') { av = av.toLowerCase(); bv = bv.toLowerCase(); }
+    let av = a[mSort.f] ?? '', bv = b[mSort.f] ?? '';
+    if (typeof av === 'string') { av = av.toLowerCase(); bv = (bv + '').toLowerCase(); }
     return mSort.asc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 }
@@ -1653,12 +1662,12 @@ function mRowHTML(m) {
   const lp = lastPaymentOf(m.name);
   const tagHTML = _memberTagsHTML(m);
   return '<tr>' +
-    '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 28) + '<span>' + m.name + '</span></a>' + (tagHTML ? '<span>' + tagHTML + '</span>' : '') + '</div></td>' +
-    '<td style="font-size:0.82rem">' + m.group + '</td>' +
+    '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 28) + '<span>' + _esc(m.name) + '</span></a>' + (tagHTML ? '<span>' + tagHTML + '</span>' : '') + '</div></td>' +
+    '<td style="font-size:0.82rem">' + _esc(m.group || '') + '</td>' +
     '<td>' + balHTML(m.balance) + '</td>' +
     '<td>' + m.totalClasses + '</td>' +
     '<td>$' + (m.totalPaid || 0).toFixed(2) + '</td>' +
-    '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
+    '<td>' + (lp ? lp.date + ' ($' + (parseFloat(lp.paid) || 0).toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
     '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
       '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>' +
       (editMode
@@ -1701,8 +1710,8 @@ function filteredPayments() {
   const from = document.getElementById('p-date-from').value;
   const to = document.getElementById('p-date-to').value;
   return DB.payments.filter(p => {
-    if (q && !p.name.toLowerCase().includes(q)) return false;
-    if (g && !p.group.toLowerCase().includes(g)) return false;
+    if (q && !(p.name || '').toLowerCase().includes(q)) return false;
+    if (g && !(p.group || '').toLowerCase().includes(g)) return false;
     if (from || to) {
       const pd = new Date(p.date);
       if (from && pd < new Date(from)) return false;
@@ -1714,10 +1723,10 @@ function filteredPayments() {
 function pRowHTML(p) {
   const ri = DB.payments.indexOf(p);
   return '<tr>' +
-    '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + p.name + '</a></td>' +
-    '<td>' + p.date + '</td>' +
-    '<td>' + (p.paid !== null ? '<strong>$' + p.paid.toFixed(2) + '</strong>' : '<span class="badge b-pau">⚠ Missing</span>') + '</td>' +
-    '<td>' + p.group + '</td>' +
+    '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + _esc(p.name || '') + '</a></td>' +
+    '<td>' + _esc(p.date || '') + '</td>' +
+    '<td>' + (p.paid !== null ? '<strong>$' + (parseFloat(p.paid) || 0).toFixed(2) + '</strong>' : '<span class="badge b-pau">⚠ Missing</span>') + '</td>' +
+    '<td>' + _esc(p.group || '') + '</td>' +
     '<td>' + balHTML(p.balance) + '</td>' +
     (editMode ? '<td class="edit-only"><button class="btn btn-red btn-sm" onclick="deletePayment(' + ri + ')">✕</button></td>' : '<td class="edit-only"></td>') +
     '</tr>';
@@ -1972,7 +1981,7 @@ function renderGroupDetail() {
           '<td>' + balHTML(m.balance) + '</td>' +
           '<td>' + m.totalClasses + '</td>' +
           '<td>$' + (m.totalPaid || 0).toFixed(2) + '</td>' +
-          '<td>' + (lp ? lp.date + ' ($' + lp.paid.toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
+          '<td>' + (lp ? lp.date + ' ($' + (parseFloat(lp.paid) || 0).toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px">' +
             '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>' +
             (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '') +
@@ -2636,11 +2645,11 @@ function openProfile(name) {
   h += '<button class="mclose" onclick="closeOv(\'ov-profile\')">✕</button></div></div>';
 
   h += '<div class="pgrid">' +
-    '<div class="pi"><div class="pi-l">Group(s)</div><div class="pi-v">' + (m.group || '—') + '</div></div>' +
-    '<div class="pi"><div class="pi-l">Phone</div><div class="pi-v">' + (m.phone || '—') + '</div></div>' +
-    '<div class="pi"><div class="pi-l">🎂 Birthday</div><div class="pi-v">' + (m.birthday || '—') + '</div></div>' +
-    '<div class="pi"><div class="pi-l">Start Date</div><div class="pi-v">' + (m.startDate || '—') + '</div></div>' +
-    '<div class="pi"><div class="pi-l">End Date</div><div class="pi-v">' + (m.endDate || 'Still Active') + '</div></div>' +
+    '<div class="pi"><div class="pi-l">Group(s)</div><div class="pi-v">' + _esc(m.group || '—') + '</div></div>' +
+    '<div class="pi"><div class="pi-l">Phone</div><div class="pi-v">' + _esc(m.phone || '—') + '</div></div>' +
+    '<div class="pi"><div class="pi-l">🎂 Birthday</div><div class="pi-v">' + _esc(m.birthday || '—') + '</div></div>' +
+    '<div class="pi"><div class="pi-l">Start Date</div><div class="pi-v">' + _esc(m.startDate || '—') + '</div></div>' +
+    '<div class="pi"><div class="pi-l">End Date</div><div class="pi-v">' + _esc(m.endDate || 'Still Active') + '</div></div>' +
     '<div class="pi"><div class="pi-l">Current Balance</div><div class="pi-v">' + balHTML(m.balance) + '</div></div>' +
     '<div class="pi"><div class="pi-l">Per Class</div><div class="pi-v">$' + m.amountPerClass + '</div></div>' +
     '<div class="pi"><div class="pi-l">Classes Attended</div><div class="pi-v">' + m.totalClasses + '</div></div>' +
@@ -2656,7 +2665,7 @@ function openProfile(name) {
       mPay.map((p, i) =>
         '<tr><td style="color:#aaa;font-size:0.78rem">' + (mPay.length - i) + '</td>' +
         '<td>' + p.date + '</td>' +
-        '<td>' + (p.paid !== null ? '$' + p.paid.toFixed(2) : '<span class="badge b-pau">⚠</span>') + '</td>' +
+        '<td>' + (p.paid !== null ? '$' + (parseFloat(p.paid) || 0).toFixed(2) : '<span class="badge b-pau">⚠</span>') + '</td>' +
         '<td>' + p.group + '</td>' +
         '<td>' + balHTML(p.balance) + '</td></tr>'
       ).join('') +
@@ -2797,6 +2806,10 @@ function openAddMember() {
 function addNewMember() {
   const name = document.getElementById('ef-name').value.trim();
   if (!name) { alert('Name is required'); return; }
+  const nameLower = name.toLowerCase();
+  const dup = DB.members.find(m => (m.name || '').trim().toLowerCase() === nameLower) ||
+              (DB.archived || []).find(a => (a.name || '').trim().toLowerCase() === nameLower);
+  if (dup) { alert('⚠ A member named "' + dup.name + '" already exists' + (dup.archivedDate ? ' (in Former Members)' : '') + '.\n\nCheck the Former Members tab if you want to restore her instead.'); return; }
   if (typeof _pushUndo === 'function') _pushUndo('Add member ' + name);
   const end = fromISODate(document.getElementById('ef-end').value);
   DB.members.push({
@@ -5385,7 +5398,7 @@ function renderReports() {
   if (!wrap) return;
 
   const payments = (DB.payments || []).filter(p => p.paid !== null);
-  const totalRevenue = payments.reduce((s, p) => s + (p.paid || 0), 0);
+  const totalRevenue = payments.reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
   const totalOutstanding = DB.members.reduce((s, m) => s + (m.balance > 0 ? m.balance : 0), 0);
   const totalCredit = DB.members.reduce((s, m) => s + (m.balance < 0 ? -m.balance : 0), 0);
   const activeCount = DB.members.filter(m => isActiveInGroup(m)).length;
@@ -5398,7 +5411,7 @@ function renderReports() {
     const d = new Date(p.date);
     if (isNaN(d.getTime())) return;
     const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-    monthly[key] = (monthly[key] || 0) + (p.paid || 0);
+    monthly[key] = (monthly[key] || 0) + (parseFloat(p.paid) || 0);
   });
   const months = Object.keys(monthly).sort().slice(-12);
   const maxMonthly = Math.max(1, ...months.map(k => monthly[k]));
@@ -7125,7 +7138,7 @@ function renderSettings() {
     '</details>' +
     '<details style="margin-bottom:10px"><summary style="cursor:pointer;padding:8px 0;font-weight:700;color:#1a3a5c">⚖️ Validation rules & thresholds</summary>' +
       '<div style="padding-top:6px">' +
-        advRow('Auto-archive members inactive for X months', 'autoArchiveMonths', 'number', '0 = never. Reviewed on app load. Members with no payment in this many months get auto-archived.') +
+        /* auto-archive removed v32 */
         advRow('Anomaly charge multiplier', 'anomalyChargeMultiplier', 'number', 'Warn if a payment > this × member\'s per-class. Default 50.') +
         advRow('Duplicate-payment window (minutes)', 'duplicateWindowMinutes', 'number', 'Warn if same member + same amount within this many minutes. Default 5.') +
         advRow('Balance-too-high warning threshold (' + _curr() + ')', 'maxBalanceWarning', 'number', 'Flag members owing more than this. Default 500.') +
@@ -7378,7 +7391,7 @@ function renderAdvanced() {
   // Section 8: Validation rules
   html += section('⚖️', 'Smart warnings — when does the app warn me?',
     'The app shows warnings when something looks unusual. Adjust how strict those warnings are. Set any number to 0 to turn that warning off.',
-    advRow('Auto-archive inactive members after X months', 'autoArchiveMonths', 'number', '0 = never auto-archive. Set to 6 = members who haven\'t paid in 6 months auto-move to "Former Members."') +
+    /* auto-archive removed v32 */
     advRow('Warn me on huge payments (X times bigger than per-class)', 'anomalyChargeMultiplier', 'number', 'Default 50. So if a member\'s class fee is $15, the app warns if you record a payment over $750. Catches typos like an extra zero.') +
     advRow('Warn me on duplicate payments (within X minutes)', 'duplicateWindowMinutes', 'number', 'Default 5. If you save the same member + same amount twice in 5 minutes, the app asks "are you sure?"') +
     advRow('"Owes too much" warning level (' + _curr() + ')', 'maxBalanceWarning', 'number', 'Default 500. Shown for awareness — doesn\'t block anything.') +
@@ -8348,9 +8361,9 @@ setTimeout(async function() {
     if (cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase) {
       try { await syncNow('auto', { silent: true }); } catch (e) {}
     }
-    _runAutoArchive();
-    _reapplyRestoreProtections(); // v32: don't let auto-archive undo a manual restore
-  } catch (e) { console.warn('Auto-archive error:', e); }
+    // v32: auto-archive disabled — was silently re-archiving restored members
+    _reapplyRestoreProtections();
+  } catch (e) { console.warn('Startup error:', e); }
 }, 1800);
 // v24: Run user's custom JS hook (sandbox-free — they own this code)
 setTimeout(() => {
