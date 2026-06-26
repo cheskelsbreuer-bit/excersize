@@ -2364,7 +2364,7 @@ function openChargeGroup(gName) {
     const future = balHTML(newBal);
     return '<tr>' +
       '<td><input type="checkbox" class="chg-check" data-name="' + esc(m.name) + '" checked></td>' +
-      '<td><strong>' + m.name + '</strong></td>' +
+      '<td><strong>' + _esc(m.name) + '</strong></td>' +
       '<td>' + cur + '</td>' +
       '<td style="color:#888">→</td>' +
       '<td>' + future + '</td>' +
@@ -2489,8 +2489,8 @@ function filteredArchived() {
 }
 function aRowHTML(a) {
   return '<tr class="arc-row">' +
-    '<td><strong>' + a.name + '</strong></td>' +
-    '<td>' + (a.group || '—') + '</td>' +
+    '<td><strong>' + _esc(a.name) + '</strong></td>' +
+    '<td>' + _esc(a.group || '—') + '</td>' +
     '<td>' + (a.archivedDate || '—') + '</td>' +
     '<td>' + balHTML(a.balance) + '</td>' +
     '<td><button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(a.name) + '\')">View History</button></td>' +
@@ -2622,7 +2622,7 @@ function openProfile(name) {
     : m.active ? '<span class="badge b-act">Active</span>'
     : '<span class="badge b-arc">Inactive</span>';
 
-  let h = '<div class="mh"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div>' + _avatarHTML(m, 56) + '</div><div><h2>' + m.name + ' ' + badge + '</h2>' + (m.tags && m.tags.length ? '<div style="margin-top:4px">' + _memberTagsHTML(m) + '</div>' : '') + '</div></div>';
+  let h = '<div class="mh"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div>' + _avatarHTML(m, 56) + '</div><div><h2>' + _esc(m.name) + ' ' + badge + '</h2>' + (m.tags && m.tags.length ? '<div style="margin-top:4px">' + _memberTagsHTML(m) + '</div>' : '') + '</div></div>';
   h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
   h += '<button class="btn btn-blue btn-sm" onclick="printStatement(\'' + esc(m.name) + '\')">🖨 Print Statement</button>';
   if (m.phone && m.balance > 0) {
