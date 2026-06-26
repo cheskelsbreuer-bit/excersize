@@ -1713,9 +1713,9 @@ function filteredPayments() {
     if (q && !(p.name || '').toLowerCase().includes(q)) return false;
     if (g && !(p.group || '').toLowerCase().includes(g)) return false;
     if (from || to) {
-      const pd = new Date(p.date);
-      if (from && pd < new Date(from)) return false;
-      if (to && pd > new Date(to)) return false;
+      const pd = _dateToYMD(p.date);
+      if (from && pd < from) return false;
+      if (to && pd > to) return false;
     }
     return true;
   });
@@ -3442,6 +3442,13 @@ function _autoCategorize() {
 
 function _uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function _esc(s) { return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _dateToYMD(s) {
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const p = s.split('/');
+  if (p.length === 3) return p[2] + '-' + p[0].padStart(2,'0') + '-' + p[1].padStart(2,'0');
+  return s;
+}
 function _countItems(c) { return c.sections.reduce((s, sec) => s + sec.items.length, 0); }
 
 function renderNotes() {
