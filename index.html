@@ -58,11 +58,11 @@ nav .corner-btn.active { background: rgba(255,255,255,0.08); color: #fff; }
 .btn-gray { background: #95a5a6; color: #fff; } .btn-gray:hover { background: #7f8c8d; }
 .btn-sm { padding: 4px 10px; font-size: 0.78rem; }
 .edit-only { display: none !important; }
-body.edit-mode .edit-only { display: inline-flex !important; }
+body.edit-mode .edit-only:not(td):not(th) { display: inline-flex !important; }
 th.edit-only { display: none; }
-body.edit-mode th.edit-only { display: table-cell; }
+body.edit-mode th.edit-only { display: table-cell !important; }
 td.edit-only { display: none; }
-body.edit-mode td.edit-only { display: table-cell; }
+body.edit-mode td.edit-only { display: table-cell !important; }
 
 .tw { overflow-x: auto; border-radius: 10px; box-shadow: 0 1px 5px rgba(0,0,0,0.09); }
 table { width: 100%; border-collapse: collapse; background: #fff; }
@@ -939,18 +939,22 @@ function saveDB() {
     DB._savedAt = Date.now();
     const serialized = JSON.stringify(DB);
     // Try localStorage (fast, synchronous)
+    let lsOk = true;
     try {
       localStorage.setItem(STORAGE_KEY, serialized);
     } catch (e) {
-      if (e && e.name === 'QuotaExceededError') {
+      lsOk = false;
+      if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014)) {
         alert('⚠ Storage is full — your data could not be saved. Please export a backup and delete old payment records to free up space.');
+      } else {
+        alert('⚠ Could not save to browser storage. Please export a backup to be safe.');
       }
       console.warn('localStorage save failed:', e);
     }
     // Also save to IndexedDB (survives file:// scenarios where localStorage fails)
     idbSet(STORAGE_KEY, DB).catch(e => console.warn('IDB save failed:', e));
     _unsavedChanges = true;
-    updateSaveIndicator();
+    updateSaveIndicator(lsOk);
     // v26: schedule cloud sync push (debounced) if enabled
     if (typeof _eg_scheduleSyncPush === 'function') _eg_scheduleSyncPush();
   } catch (e) {
@@ -959,15 +963,22 @@ function saveDB() {
   }
 }
 
-function updateSaveIndicator() {
+function updateSaveIndicator(ok) {
   const el = document.getElementById('save-status');
   if (el) {
-    el.textContent = '✓ Saved to browser';
-    el.style.color = '#27ae60';
-    clearTimeout(window._saveFade);
-    window._saveFade = setTimeout(() => {
-      if (el) { el.textContent = '💾 Auto-saved'; el.style.color = '#888'; }
-    }, 1500);
+    if (ok === false) {
+      // localStorage write failed — don't claim it saved (bug #35).
+      el.textContent = '⚠ Not saved to browser';
+      el.style.color = '#c0392b';
+      clearTimeout(window._saveFade);
+    } else {
+      el.textContent = '✓ Saved to browser';
+      el.style.color = '#27ae60';
+      clearTimeout(window._saveFade);
+      window._saveFade = setTimeout(() => {
+        if (el) { el.textContent = '💾 Auto-saved'; el.style.color = '#888'; }
+      }, 1500);
+    }
   }
   // Pulse the "Save to File" button to remind the user to create a persistent file backup
   // v27: skip pulse when cloud sync is active — no need to nag about file backups
@@ -1053,7 +1064,12 @@ function renderActivityLog() {
   const fc = document.getElementById('log-filter-cat');
   const fq = document.getElementById('log-filter-q');
   const filterCat = fc ? fc.value : '';
-  const filterQ = fq ? fq.value.toLowerCase() : '';
+  const filterQRaw = fq ? fq.value : '';          // keep as typed for display (bug #25)
+  const filterQ = filterQRaw.toLowerCase();       // lowercased copy only for matching
+  // Remember focus + caret so we can restore them after we rebuild the tab's innerHTML,
+  // otherwise the search box loses focus on every keystroke.
+  const _hadFocus = fq && document.activeElement === fq;
+  const _caret = fq ? fq.selectionStart : null;
 
   let entries = DB._log.slice();
   if (filterCat) entries = entries.filter(e => e.category === filterCat);
@@ -1069,7 +1085,7 @@ function renderActivityLog() {
 
   let html = '<div class="notice">📜 Activity log — every change you make in the app gets recorded here. <a href="#" onclick="openLogSettings();return false" style="color:#2d6a9f;font-weight:600">⚙ Settings</a></div>';
   html += '<div class="toolbar">';
-  html += '<input id="log-filter-q" placeholder="🔍 Search log..." value="' + _esc(filterQ) + '" oninput="renderActivityLog()">';
+  html += '<input id="log-filter-q" placeholder="🔍 Search log..." value="' + _esc(filterQRaw) + '" oninput="renderActivityLog()">';
   html += '<select id="log-filter-cat" onchange="renderActivityLog()">' + catOpts + '</select>';
   html += '<button class="btn btn-red btn-sm" onclick="clearActivityLog()">🗑 Clear log</button>';
   html += '</div>';
@@ -1079,6 +1095,7 @@ function renderActivityLog() {
       (DB._log.length === 0 ? 'No activity yet. Make some changes — they\'ll show up here.' : 'No entries match your filter.') +
       '</div>';
     tab.innerHTML = html;
+    _restoreLogSearchFocus(_hadFocus, _caret);
     return;
   }
 
@@ -1108,6 +1125,14 @@ function renderActivityLog() {
     });
   });
   tab.innerHTML = html;
+  _restoreLogSearchFocus(_hadFocus, _caret);
+}
+function _restoreLogSearchFocus(hadFocus, caret) {
+  if (!hadFocus) return;
+  const el = document.getElementById('log-filter-q');
+  if (!el) return;
+  el.focus();
+  if (caret != null) { try { el.setSelectionRange(caret, caret); } catch (e) {} }
 }
 
 function openLogSettings() {
@@ -1162,10 +1187,19 @@ function resetToOriginal() {
 }
 
 function exportBackup() {
-  const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
+  // Honor the "Include member photos in backups" toggle (bug #19). When OFF, strip the
+  // base64 photos from a shallow copy so the file is actually smaller.
+  const _stripPhotos = (DB.settings && DB.settings.backend && DB.settings.backend.exportIncludesPhotos === false);
+  const _exportDB = _stripPhotos
+    ? Object.assign({}, DB, {
+        members: (DB.members || []).map(m => { const c = Object.assign({}, m); delete c.photo; return c; }),
+        archived: (DB.archived || []).map(m => { const c = Object.assign({}, m); delete c.photo; return c; })
+      })
+    : DB;
+  const blob = new Blob([JSON.stringify(_exportDB, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localISODate();
   a.href = url;
   a.download = 'ExerciseGroup_Backup_' + today + '.json';
   a.click();
@@ -1209,6 +1243,18 @@ function importBackup() {
         if (!Array.isArray(DB.paused)) DB.paused = [];
         if (!Array.isArray(DB.tags)) DB.tags = [];
         if (!DB.notes) DB.notes = { combos: [] };
+        // Coerce money fields to numbers (bug #31/#37): old/hand-edited backups can store
+        // balances as strings, which turns "balance + charge" into string concatenation,
+        // and a missing name crashes search/sort. Normalize both here.
+        DB.members.forEach(m => {
+          if (!m.name) m.name = '';
+          m.balance = Number(m.balance) || 0;
+          m.totalOwed = Number(m.totalOwed) || 0;
+          m.totalPaid = Number(m.totalPaid) || 0;
+          m.amountPerClass = Number(m.amountPerClass) || 0;
+        });
+        DB.archived.forEach(a => { if (!a.name) a.name = ''; a.balance = Number(a.balance) || 0; });
+        DB.payments.forEach(p => { if (p.paid !== null && p.paid !== undefined) p.paid = Number(p.paid); });
         // v20 BUGFIX: clean up returned-pause records that may exist in old backups
         if (Array.isArray(DB.paused)) {
           const before = DB.paused.length;
@@ -1238,14 +1284,14 @@ function exportCSV() {
     else if (isCurrentlyPaused(m.name)) status = 'Paused';
     return [m.name, m.group, m.phone || '', m.startDate || '', m.endDate || '',
             m.balance, m.totalClasses, (m.totalPaid || 0).toFixed(2), status]
-      .map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',');
+      .map(v => { let s = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; }).join(',');
   }).join('\n');
   const csv = header + rows;
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'Members_Export_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.download = 'Members_Export_' + localISODate() + '.csv';
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1286,7 +1332,7 @@ function printStatement(name) {
   const m = DB.members.find(x => x.name === name) || (DB.archived || []).find(x => x.name === name);
   if (!m) return;
   const mPay = DB.payments.filter(p => p.name === name).sort((a, b) => new Date(b.date) - new Date(a.date));
-  const tot = mPay.filter(p => p.paid !== null).reduce((s, p) => s + p.paid, 0);
+  const tot = mPay.filter(p => p.paid !== null).reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
   const today = _fmtDate(new Date().toISOString());
   const branding = (DB.settings && DB.settings.branding) || { name: 'Exercise Group', emoji: '💪' };
   const accent = (DB.settings && DB.settings.theme && DB.settings.theme.custom && DB.settings.theme.custom.accent) || '#2d6a9f';
@@ -1440,7 +1486,7 @@ function todayStr() {
 }
 function fmtDate(raw) {
   if (!raw) return '';
-  const d = new Date(raw);
+  const d = parseLocalDate(raw);
   return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
 }
 // Convert "MM/DD/YYYY" to "YYYY-MM-DD" for <input type="date">
@@ -1473,8 +1519,54 @@ function renderPag(cid, arr, page, fn) {
   h += '<span class="pinfo">' + arr.length + ' total</span>';
   el.innerHTML = h;
 }
+// esc: full HTML escaping (& < > " '), safe for BOTH text content and double-quoted
+// attribute values. (It used to escape only quotes, which let '<' in a name break/inject
+// into innerHTML. All onclick JS-string arguments now use escJs() instead, so making esc
+// escape < > & is safe everywhere it is still used.)
 function esc(s) {
-  return String(s).replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// escJs: safely place a value inside a SINGLE-quoted JS string that lives inside a
+// DOUBLE-quoted onclick="..." attribute. esc() alone is NOT enough: the HTML parser
+// decodes &#39; back into a real apostrophe BEFORE the handler compiles as JS, which
+// terminates the string and silently kills the button (breaks names like O'Brien /
+// "Women's Class"). We HTML-escape <>&" for the attribute, then backslash-escape the
+// apostrophe/backslash for the JS string. Order matters: entities first, then JS.
+function escJs(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+// parseLocalDate: turn a 'YYYY-MM-DD' value from an <input type="date"> into a Date
+// built from LOCAL calendar parts. new Date('2026-07-13') parses as UTC midnight, which
+// reads back as the PREVIOUS day for anyone west of UTC (all of the US) — corrupting
+// stored payment/class/pause dates. This keeps the picked calendar day intact.
+function parseLocalDate(s) {
+  const p = String(s || '').split('-');
+  if (p.length === 3) {
+    const y = +p[0], mo = +p[1], d = +p[2];
+    if (!isNaN(y) && !isNaN(mo) && !isNaN(d)) return new Date(y, mo - 1, d);
+  }
+  return new Date(s);
+}
+// localISODate: today's date as 'YYYY-MM-DD' from LOCAL parts (not UTC), for prefilling
+// date inputs so they never pre-fill "tomorrow" late in the evening for US users.
+function localISODate(dt) {
+  const n = dt || new Date();
+  return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
+}
+// _inGroup: does member m belong to group gName? The member .group field is a
+// comma-joined multi-group string ("Sunday, Monday"), so we split into tokens and match
+// EXACTLY (case-insensitive). Using substring includes() wrongly matches overlapping
+// names ("Adults" vs "Young Adults") and desyncs from the exact-match billing detection.
+function _inGroup(m, gName) {
+  if (!m || !m.group || !gName) return false;
+  const g = String(gName).toLowerCase().trim();
+  return String(m.group).toLowerCase().split(',').map(s => s.trim()).includes(g);
 }
 function openOv(id) { document.getElementById(id).classList.add('open'); }
 function closeOv(id) { document.getElementById(id).classList.remove('open'); }
@@ -1483,7 +1575,7 @@ document.querySelectorAll('.overlay').forEach(o => {
 });
 function memberOpts(preset) {
   return DB.members.filter(m => !isArchived(m.name))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     .map(m => '<option value="' + esc(m.name) + '"' + (m.name === preset ? ' selected' : '') + '>' + m.name + '</option>')
     .join('');
 }
@@ -1552,7 +1644,10 @@ function initDashboard() {
   const paused = DB.paused.filter(p => p.stillPaused && !arc.has(p.name)).length;
   const owe = activeMembers.filter(m => m.balance > 0).length;
   const credit = activeMembers.filter(m => m.balance < 0).length;
-  const rev = activeMembers.reduce((s, m) => s + (m.totalPaid || 0), 0);
+  // Total Collected is a LIFETIME cash figure — sum every payment (like the Reports tab),
+  // not just active members' cached totalPaid. Otherwise archiving a paid-up member made
+  // the headline shrink and disagree with Reports (bugs #16/#17).
+  const rev = (DB.payments || []).reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
   const totalOwed = activeMembers.filter(m => m.balance > 0).reduce((s, m) => s + m.balance, 0);
 
   document.getElementById('hdr-sub').textContent = activeMembers.length + ' active members · ' + _money(totalOwed) + ' outstanding';
@@ -1561,8 +1656,8 @@ function initDashboard() {
     '<div class="sc g"><div class="v">' + activeMembers.length + '</div><div class="l">Active Members</div></div>' +
     '<div class="sc r"><div class="v">' + owe + '</div><div class="l">Owe Money</div></div>' +
     '<div class="sc g"><div class="v">' + credit + '</div><div class="l">Have Credit</div></div>' +
-    '<div class="sc r"><div class="v">$' + totalOwed.toFixed(2) + '</div><div class="l">Total Outstanding</div></div>' +
-    '<div class="sc"><div class="v">$' + rev.toLocaleString() + '</div><div class="l">Total Collected</div></div>' +
+    '<div class="sc r"><div class="v">' + _money(totalOwed) + '</div><div class="l">Total Outstanding</div></div>' +
+    '<div class="sc"><div class="v">' + _money(rev) + '</div><div class="l">Total Collected</div></div>' +
     '<div class="sc o"><div class="v">' + paused + '</div><div class="l">Paused (hidden)</div></div>';
 
   // Who owes — active only
@@ -1571,13 +1666,13 @@ function initDashboard() {
     ? oweList.map(m => {
         const lp = lastPaymentOf(m.name);
         return '<tr>' +
-          '<td><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + m.name + '</a></td>' +
-          '<td>' + m.group + '</td>' +
+          '<td><a href="#" onclick="openProfile(\'' + escJs(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + esc(m.name) + '</a></td>' +
+          '<td>' + esc(m.group || '') + '</td>' +
           '<td>' + balHTML(m.balance) + '</td>' +
           '<td>' + (lp ? lp.date + ' ($' + (parseFloat(lp.paid) || 0).toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
-            (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>') +
-            (m.phone ? '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')" title="Send reminder SMS">📱</button></span>' : '') +
+            (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + escJs(m.name) + '\')">+ Pay</button>' : '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + escJs(m.name) + '\')">View</button>') +
+            (m.phone ? '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + escJs(m.name) + '\')" title="Send reminder SMS">📱</button></span>' : '') +
           '</td>' +
           '</tr>';
       }).join('')
@@ -1588,10 +1683,10 @@ function initDashboard() {
   document.getElementById('ds-recent').innerHTML = recent.length
     ? recent.map(p =>
         '<tr>' +
-        '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + p.name + '</a></td>' +
+        '<td><a href="#" onclick="openProfile(\'' + escJs(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + esc(p.name) + '</a></td>' +
         '<td>' + p.date + '</td>' +
         '<td><strong>$' + (parseFloat(p.paid) || 0).toFixed(2) + '</strong></td>' +
-        '<td>' + p.group + '</td>' +
+        '<td>' + esc(p.group || '') + '</td>' +
         '<td>' + balHTML(p.balance) + '</td>' +
         '</tr>'
       ).join('')
@@ -1616,17 +1711,18 @@ function initDashboard() {
   // v21: show "Send Today's Greetings" button if feature ON and there's a birthday today
   const bdayBtn = document.getElementById('ds-bday-btn');
   if (bdayBtn) bdayBtn.style.display = (_featureOn('birthdayGreetings') && _todaysBirthdays().length > 0) ? '' : 'none';
-  if (bdays.length > 0) {
+  const _bdayOn = !(DB.settings && DB.settings.backend && DB.settings.backend.dashShowBirthdays === false);
+  if (bdays.length > 0 && _bdayOn) {
     bdayWrap.style.display = '';
     document.getElementById('ds-birthdays').innerHTML = bdays.map(b => {
       const today = now.getDate();
       const isToday = b.day === today;
       return '<tr' + (isToday ? ' style="background:#fff9e6"' : '') + '>' +
-        '<td><a href="#" onclick="openProfile(\'' + esc(b.member.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' +
-        (isToday ? '🎉 ' : '') + b.member.name + '</a></td>' +
+        '<td><a href="#" onclick="openProfile(\'' + escJs(b.member.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' +
+        (isToday ? '🎉 ' : '') + esc(b.member.name) + '</a></td>' +
         '<td>' + b.member.birthday + (isToday ? ' <strong style="color:#e67e22">(TODAY!)</strong>' : '') + '</td>' +
         '<td>' + b.turning + '</td>' +
-        '<td>' + b.member.group + '</td>' +
+        '<td>' + esc(b.member.group || '') + '</td>' +
         '</tr>';
     }).join('');
   } else {
@@ -1646,7 +1742,7 @@ function filteredMembers() {
     if (!m.active) return false;
     if (isCurrentlyPaused(m.name)) return false; // hide paused from main Members list
     const mg = (m.group || '').toLowerCase();
-    if (q && !m.name.toLowerCase().includes(q) && !mg.includes(q)) return false;
+    if (q && !(m.name || '').toLowerCase().includes(q) && !mg.includes(q)) return false;
     if (f === 'owes' && m.balance <= 0) return false;
     if (f === 'credit' && m.balance >= 0) return false;
     if (f === 'even' && m.balance !== 0) return false;
@@ -1662,29 +1758,33 @@ function mRowHTML(m) {
   const lp = lastPaymentOf(m.name);
   const tagHTML = _memberTagsHTML(m);
   return '<tr>' +
-    '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 28) + '<span>' + _esc(m.name) + '</span></a>' + (tagHTML ? '<span>' + tagHTML + '</span>' : '') + '</div></td>' +
+    '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + escJs(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 28) + '<span>' + _esc(m.name) + '</span></a>' + (tagHTML ? '<span>' + tagHTML + '</span>' : '') + '</div></td>' +
     '<td style="font-size:0.82rem">' + _esc(m.group || '') + '</td>' +
     '<td>' + balHTML(m.balance) + '</td>' +
     '<td>' + m.totalClasses + '</td>' +
     '<td>$' + (m.totalPaid || 0).toFixed(2) + '</td>' +
     '<td>' + (lp ? lp.date + ' ($' + (parseFloat(lp.paid) || 0).toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
     '<td style="display:flex;gap:4px;flex-wrap:wrap">' +
-      '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>' +
+      '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + escJs(m.name) + '\')">View</button>' +
       (editMode
-        ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' +
-          '<button class="btn btn-orange btn-sm" onclick="openEditMember(\'' + esc(m.name) + '\')">Edit</button>' +
-          '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + esc(m.name) + '\')">Archive</button>'
+        ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + escJs(m.name) + '\')">+ Pay</button>' +
+          '<button class="btn btn-orange btn-sm" onclick="openEditMember(\'' + escJs(m.name) + '\')">Edit</button>' +
+          '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + escJs(m.name) + '\')">Archive</button>'
         : '') +
     '</td></tr>';
 }
 function renderMembers() {
-  mPage = 1;
   const list = filteredMembers();
+  // Keep the current page across re-renders (bug #38); only clamp it into range.
+  const pageCount = Math.max(1, Math.ceil(list.length / PER));
+  mPage = Math.min(Math.max(mPage || 1, 1), pageCount);
   document.getElementById('m-body').innerHTML = list.length
-    ? pg(list, 1).map(mRowHTML).join('')
+    ? pg(list, mPage).map(mRowHTML).join('')
     : '<tr><td colspan="7" class="empty">No members found</td></tr>';
-  renderPag('m-pag', list, 1, 'setMPage');
+  renderPag('m-pag', list, mPage, 'setMPage');
 }
+// Used by the search/filter inputs — a changed filter legitimately resets to page 1.
+function renderMembersFromFilter() { mPage = 1; renderMembers(); }
 function setMPage(p) {
   mPage = p;
   const list = filteredMembers();
@@ -1696,9 +1796,9 @@ function sortM(f) {
   else { mSort.f = f; mSort.asc = true; }
   renderMembers();
 }
-document.getElementById('mq').addEventListener('input', renderMembers);
-document.getElementById('mf').addEventListener('change', renderMembers);
-document.getElementById('mg').addEventListener('change', renderMembers);
+document.getElementById('mq').addEventListener('input', renderMembersFromFilter);
+document.getElementById('mf').addEventListener('change', renderMembersFromFilter);
+document.getElementById('mg').addEventListener('change', renderMembersFromFilter);
 document.querySelectorAll('th.sort').forEach(th => {
   th.addEventListener('click', function() { sortM(this.getAttribute('data-f')); });
 });
@@ -1723,7 +1823,7 @@ function filteredPayments() {
 function pRowHTML(p) {
   const ri = DB.payments.indexOf(p);
   return '<tr>' +
-    '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + _esc(p.name || '') + '</a></td>' +
+    '<td><a href="#" onclick="openProfile(\'' + escJs(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + _esc(p.name || '') + '</a></td>' +
     '<td>' + _esc(p.date || '') + '</td>' +
     '<td>' + (p.paid !== null ? '<strong>$' + (parseFloat(p.paid) || 0).toFixed(2) + '</strong>' : '<span class="badge b-pau">⚠ Missing</span>') + '</td>' +
     '<td>' + _esc(p.group || '') + '</td>' +
@@ -1732,13 +1832,15 @@ function pRowHTML(p) {
     '</tr>';
 }
 function renderPayments() {
-  pPage = 1;
   const list = filteredPayments();
+  const pageCount = Math.max(1, Math.ceil(list.length / PER));
+  pPage = Math.min(Math.max(pPage || 1, 1), pageCount);
   document.getElementById('p-body').innerHTML = list.length
-    ? pg(list, 1).map(pRowHTML).join('')
+    ? pg(list, pPage).map(pRowHTML).join('')
     : '<tr><td colspan="6" class="empty">No payments found</td></tr>';
-  renderPag('p-pag', list, 1, 'setPPage');
+  renderPag('p-pag', list, pPage, 'setPPage');
 }
+function renderPaymentsFromFilter() { pPage = 1; renderPayments(); }
 function setPPage(p) {
   pPage = p;
   const list = filteredPayments();
@@ -1770,8 +1872,8 @@ function deletePayment(ri) {
   reRenderAll();
 }
 ['pq', 'pg-sel', 'p-date-from', 'p-date-to'].forEach(id => {
-  document.getElementById(id).addEventListener('input', renderPayments);
-  document.getElementById(id).addEventListener('change', renderPayments);
+  document.getElementById(id).addEventListener('input', renderPaymentsFromFilter);
+  document.getElementById(id).addEventListener('change', renderPaymentsFromFilter);
 });
 
 /* ============ PAUSED TAB ============ */
@@ -1793,8 +1895,8 @@ function filteredPaused() {
 function puRowHTML(p) {
   const ri = DB.paused.indexOf(p);
   return '<tr>' +
-    '<td><a href="#" onclick="openProfile(\'' + esc(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + p.name + '</a></td>' +
-    '<td>' + p.group + '</td>' +
+    '<td><a href="#" onclick="openProfile(\'' + escJs(p.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + esc(p.name) + '</a></td>' +
+    '<td>' + esc(p.group || '') + '</td>' +
     '<td>' + p.fromDate + '</td>' +
     '<td>' + (p.toDate || '<span class="badge b-pau">Ongoing</span>') + '</td>' +
     '<td>' + p.classespaused + '</td>' +
@@ -1853,13 +1955,13 @@ function renderGroups() {
       !arc.has(m.name) &&
       m.active &&
       m.group &&
-      m.group.toLowerCase().includes(gName.toLowerCase())
+      _inGroup(m, gName)
     );
     const truly = groupMembers.filter(m => !isCurrentlyPaused(m.name));
     // v20 BUGFIX: revenue uses each member's actual amountPerClass, not hardcoded $15
     const revenue = truly.reduce((s, m) => s + (m.amountPerClass || dpc), 0);
     return '<div class="gcard">' +
-      '<div onclick="openGroupDetail(\'' + esc(gName) + '\')" style="cursor:pointer">' +
+      '<div onclick="openGroupDetail(\'' + escJs(gName) + '\')" style="cursor:pointer">' +
         '<h3>' + esc(gName) + ' Group <span style="font-size:0.72rem;color:#888;font-weight:400">→ click to open</span></h3>' +
         '<div class="gstat-row">' +
           '<div class="gst"><strong>' + truly.length + '</strong><span>Active</span></div>' +
@@ -1882,7 +1984,7 @@ function openGroupDetail(gName) {
   if (headerBtn) {
     let buttons = '';
     if (editMode) buttons += _groupActionButton(gName, 'header');
-    if (editMode && _featureOn('attendance')) buttons += ' <button class="btn btn-blue" onclick="openAttendance(\'' + gName + '\')">📅 Take Attendance</button>';
+    if (editMode && _featureOn('attendance')) buttons += ' <button class="btn btn-blue" onclick="openAttendance(\'' + escJs(gName) + '\')">📅 Take Attendance</button>';
     headerBtn.innerHTML = buttons;
   }
   renderGroupDetail();
@@ -1894,8 +1996,8 @@ function openAttendance(gName) {
   const arc = archivedSet();
   const members = DB.members.filter(m =>
     !arc.has(m.name) && m.active && !isCurrentlyPaused(m.name) &&
-    m.group && m.group.toLowerCase().includes(gName.toLowerCase())
-  ).sort((a, b) => a.name.localeCompare(b.name));
+    _inGroup(m, gName)
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   if (!members.length) { alert('No active members in ' + gName + '.'); return; }
   const today = new Date();
   const isoDate = today.toISOString().slice(0, 10);
@@ -1915,7 +2017,7 @@ function openAttendance(gName) {
     '</div>' +
     '<div class="factions">' +
       '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Cancel</button>' +
-      '<button class="btn btn-green" onclick="chargeAttendees(\'' + esc(gName) + '\')">💳 Charge Attendees</button>' +
+      '<button class="btn btn-green" onclick="chargeAttendees(\'' + escJs(gName) + '\')">💳 Charge Attendees</button>' +
     '</div>';
   openOv('ov-edit');
 }
@@ -1925,7 +2027,7 @@ function chargeAttendees(gName) {
   const dateRaw = document.getElementById('att-date').value;
   if (!dateRaw) { alert('Pick a class date.'); return; }
   if (typeof _pushUndo === 'function') _pushUndo('Attendance charge ' + gName);
-  const d = new Date(dateRaw);
+  const d = parseLocalDate(dateRaw);
   const dateStr = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   let total = 0, count = 0;
   checked.forEach(cb => {
@@ -1950,14 +2052,23 @@ function chargeAttendees(gName) {
 function renderGroupDetail() {
   const arc = archivedSet();
   const gName = currentGroup;
+  // Rebuild the header action buttons every render so they track Edit Mode when it's
+  // toggled while the group page is open (bug #22).
+  const _gdHeader = document.getElementById('gd-charge-btn');
+  if (_gdHeader) {
+    let _btns = '';
+    if (editMode) _btns += _groupActionButton(gName, 'header');
+    if (editMode && _featureOn('attendance')) _btns += ' <button class="btn btn-blue" onclick="openAttendance(\'' + escJs(gName) + '\')">📅 Take Attendance</button>';
+    _gdHeader.innerHTML = _btns;
+  }
   // Only truly active members — not archived, not inactive, not paused
   const members = DB.members.filter(m =>
     !arc.has(m.name) &&
     m.active &&
     !isCurrentlyPaused(m.name) &&
     m.group &&
-    m.group.toLowerCase().includes(gName.toLowerCase())
-  ).sort((a, b) => a.name.localeCompare(b.name));
+    _inGroup(m, gName)
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   const totalOwed = members.filter(m => m.balance > 0).reduce((s, m) => s + m.balance, 0);
   const totalPaid = members.reduce((s, m) => s + (m.totalPaid || 0), 0);
@@ -1977,14 +2088,14 @@ function renderGroupDetail() {
     ? members.map(m => {
         const lp = lastPaymentOf(m.name);
         return '<tr>' +
-          '<td><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + m.name + '</a></td>' +
+          '<td><a href="#" onclick="openProfile(\'' + escJs(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600">' + esc(m.name) + '</a></td>' +
           '<td>' + balHTML(m.balance) + '</td>' +
           '<td>' + m.totalClasses + '</td>' +
           '<td>$' + (m.totalPaid || 0).toFixed(2) + '</td>' +
           '<td>' + (lp ? lp.date + ' ($' + (parseFloat(lp.paid) || 0).toFixed(2) + ')' : '<em style="color:#aaa">None</em>') + '</td>' +
           '<td style="display:flex;gap:4px">' +
-            '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(m.name) + '\')">View</button>' +
-            (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + esc(m.name) + '\')">+ Pay</button>' : '') +
+            '<button class="btn btn-blue btn-sm" onclick="openProfile(\'' + escJs(m.name) + '\')">View</button>' +
+            (editMode ? '<button class="btn btn-green btn-sm" onclick="openAddPayment(\'' + escJs(m.name) + '\')">+ Pay</button>' : '') +
           '</td></tr>';
       }).join('')
     : '<tr><td colspan="6" class="empty">No active members in this group</td></tr>';
@@ -2037,15 +2148,15 @@ function _groupActionButton(gName, location) {
   const btnCharge =
     '<button class="btn btn-orange ' + (isCard ? 'btn-sm' : '') + '" ' +
     (isCard ? 'style="flex:1"' : '') +
-    ' onclick="openChargeGroup(\'' + esc(gName) + '\')" title="Bill everyone for ONE class">💳 Charge Everyone</button>';
+    ' onclick="openChargeGroup(\'' + escJs(gName) + '\')" title="Bill everyone for ONE class">💳 Charge Everyone</button>';
   const btnMonth =
     '<button class="btn btn-blue ' + (isCard ? 'btn-sm' : '') + '" ' +
     (isCard ? 'style="flex:1"' : '') +
-    ' onclick="openMonthlyChargeGroup(\'' + esc(gName) + '\')" title="Bill everyone for several classes at once — typical 1st-of-month workflow">📅 Charge for Month</button>';
+    ' onclick="openMonthlyChargeGroup(\'' + escJs(gName) + '\')" title="Bill everyone for several classes at once — typical 1st-of-month workflow">📅 Charge for Month</button>';
   const btnCredit = showCredit
     ? '<button class="btn btn-red ' + (isCard ? 'btn-sm' : '') + '" ' +
       (isCard ? 'style="flex:1"' : '') +
-      ' onclick="openCreditGroup(\'' + esc(gName) + '\')" title="Class was canceled — refund one class fee to everyone (you already pre-billed this month)">💸 Class Canceled</button>'
+      ' onclick="openCreditGroup(\'' + escJs(gName) + '\')" title="Class was canceled — refund one class fee to everyone (you already pre-billed this month)">💸 Class Canceled</button>'
     : '';
 
   if (isCard) {
@@ -2072,8 +2183,8 @@ function openMonthlyChargeGroup(gName) {
   const arc = archivedSet();
   const members = DB.members.filter(m =>
     !arc.has(m.name) && m.active && !isCurrentlyPaused(m.name) &&
-    m.group && m.group.toLowerCase().includes(gName.toLowerCase())
-  ).sort((a, b) => a.name.localeCompare(b.name));
+    _inGroup(m, gName)
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   if (!members.length) { alert('No active members in ' + gName + '.'); return; }
 
   const dpc = _defaultPerClass();
@@ -2084,7 +2195,7 @@ function openMonthlyChargeGroup(gName) {
   function renderRows(n) {
     return members.map(m => {
       const perClass = m.amountPerClass || dpc;
-      const lineAmt = _applyAllDiscounts(m, perClass * n);
+      const lineAmt = (_applyAllDiscounts(m, perClass) * n);
       return '<tr>' +
         '<td><input type="checkbox" class="mchg-check" data-name="' + esc(m.name) + '" data-perclass="' + perClass + '" checked></td>' +
         '<td><strong>' + esc(m.name) + '</strong></td>' +
@@ -2118,7 +2229,7 @@ function openMonthlyChargeGroup(gName) {
     '</div>' +
     '<div class="factions">' +
       '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
-      '<button class="btn btn-blue" onclick="confirmMonthlyChargeGroup(\'' + esc(gName) + '\')">📅 Bill Selected for the Month</button>' +
+      '<button class="btn btn-blue" onclick="confirmMonthlyChargeGroup(\'' + escJs(gName) + '\')">📅 Bill Selected for the Month</button>' +
     '</div>';
   openOv('ov-charge');
   updateMonthlyChargePreview();
@@ -2133,7 +2244,7 @@ function updateMonthlyChargePreview() {
     const perClass = parseFloat(cb.getAttribute('data-perclass')) || 0;
     const m = DB.members.find(x => x.name === name);
     if (!m) return;
-    const lineAmt = cb.checked ? _applyAllDiscounts(m, perClass * n) : 0;
+    const lineAmt = cb.checked ? (_applyAllDiscounts(m, perClass) * n) : 0;
     if (cb.checked) grand += lineAmt;
     const cells = row.querySelectorAll('td');
     cells[5].innerHTML = cb.checked ? '<strong>' + _money(lineAmt) + '</strong>' : '<em style="color:#aaa">skipped</em>';
@@ -2149,7 +2260,12 @@ function confirmMonthlyChargeGroup(gName) {
   // typically; >8 is almost certainly a typo. Catches an extra-digit fat-finger.
   if (!n || n < 1 || n > 8) { alert('Number of classes must be between 1 and 8 (typo guard).'); return; }
   const monthLabel = (document.getElementById('mchg-month').value || '').trim() || (new Date().toLocaleString('default', { month: 'long', year: 'numeric' }));
-  const monthKey = _monthKey(); // stable YYYY-MM for dedupe/detection
+  // Derive the stable YYYY-MM key from the month the user actually typed (e.g. billing
+  // "August 2026" early on July 30). Falls back to the current month if the label can't
+  // be parsed. Previously this was always _monthKey() (today), so a pre-billed group
+  // showed as "not charged" next month and could be billed twice. (bug #13)
+  const _mParsed = new Date(monthLabel);
+  const monthKey = isNaN(_mParsed) ? _monthKey() : _monthKey(_mParsed);
   const checked = [...document.querySelectorAll('.mchg-check:checked')];
   if (!checked.length) { alert('No members selected.'); return; }
 
@@ -2178,7 +2294,7 @@ function confirmMonthlyChargeGroup(gName) {
     const perClass = parseFloat(cb.getAttribute('data-perclass')) || 0;
     const m = DB.members.find(x => x.name === name);
     if (!m) return null;
-    const lineAmt = _applyAllDiscounts(m, perClass * n);
+    const lineAmt = (_applyAllDiscounts(m, perClass) * n);
     grand += lineAmt;
     return { m, lineAmt };
   }).filter(Boolean);
@@ -2194,7 +2310,7 @@ function confirmMonthlyChargeGroup(gName) {
 
   if (!DB.classes) DB.classes = [];
   DB.classes.unshift({
-    date: new Date().toISOString().slice(0, 10),
+    date: localISODate(),
     day: gName,
     monthly: true,
     monthKey: monthKey,        // stable, locale-independent key
@@ -2279,19 +2395,19 @@ function openCreditGroup(gName) {
   const arc = archivedSet();
   const members = DB.members.filter(m =>
     !arc.has(m.name) && m.active && !isCurrentlyPaused(m.name) &&
-    m.group && m.group.toLowerCase().includes(gName.toLowerCase())
-  ).sort((a, b) => a.name.localeCompare(b.name));
+    _inGroup(m, gName)
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   if (!members.length) { alert('No active members in ' + gName + '.'); return; }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localISODate();
   const dpc = _defaultPerClass();
-  const listHTML = members.map(m => {
+  const listHTML = members.map((m, i) => {
     const amt = _applyAllDiscounts(m, m.amountPerClass || dpc);
     return '<tr>' +
-      '<td><input type="checkbox" class="cred-check" data-name="' + esc(m.name) + '" data-amount="' + amt + '" checked></td>' +
+      '<td><input type="checkbox" class="cred-check" data-name="' + esc(m.name) + '" data-amount="' + amt + '" data-cur="' + (m.balance || 0) + '" checked onchange="updateCreditPreview()"></td>' +
       '<td><strong>' + esc(m.name) + '</strong></td>' +
       '<td>' + balHTML(m.balance) + '</td>' +
       '<td style="color:#888">→</td>' +
-      '<td>' + balHTML(m.balance - amt) + '</td>' +
+      '<td id="cred-after-' + i + '">' + balHTML(m.balance - amt) + '</td>' +
     '</tr>';
   }).join('');
   document.getElementById('ov-charge-body').innerHTML =
@@ -2303,8 +2419,8 @@ function openCreditGroup(gName) {
     '<div style="margin-top:16px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
         '<strong style="font-size:0.88rem">' + members.length + ' active members</strong>' +
-        '<div><button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.cred-check\').forEach(c=>c.checked=true)">Select All</button> ' +
-        '<button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.cred-check\').forEach(c=>c.checked=false)">Select None</button></div>' +
+        '<div><button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.cred-check\').forEach(c=>c.checked=true);updateCreditPreview()">Select All</button> ' +
+        '<button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.cred-check\').forEach(c=>c.checked=false);updateCreditPreview()">Select None</button></div>' +
       '</div>' +
       '<div class="tw" style="max-height:360px;overflow-y:auto"><table>' +
         '<thead><tr><th>Credit?</th><th>Name</th><th>Current Balance</th><th></th><th>After Credit</th></tr></thead>' +
@@ -2313,16 +2429,28 @@ function openCreditGroup(gName) {
     '</div>' +
     '<div class="factions">' +
       '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
-      '<button class="btn btn-red" onclick="confirmCreditGroup(\'' + esc(gName) + '\')">💸 Credit Selected Members</button>' +
+      '<button class="btn btn-red" onclick="confirmCreditGroup(\'' + escJs(gName) + '\')">💸 Credit Selected Members</button>' +
     '</div>';
   openOv('ov-charge');
+  updateCreditPreview();
+}
+// Live "After Credit" preview for the Class-Canceled modal (bug #40): unchecked rows show
+// the unchanged balance, checked rows show balance minus the credit.
+function updateCreditPreview() {
+  document.querySelectorAll('.cred-check').forEach((cb, i) => {
+    const cell = document.getElementById('cred-after-' + i);
+    if (!cell) return;
+    const cur = parseFloat(cb.getAttribute('data-cur')) || 0;
+    const amt = parseFloat(cb.getAttribute('data-amount')) || 0;
+    cell.innerHTML = cb.checked ? balHTML(cur - amt) : balHTML(cur);
+  });
 }
 function confirmCreditGroup(gName) {
   const checked = [...document.querySelectorAll('.cred-check:checked')];
   if (!checked.length) { alert('No one selected.'); return; }
   const dateRaw = document.getElementById('cred-date').value;
   if (!dateRaw) { alert('Pick a date.'); return; }
-  const d = new Date(dateRaw);
+  const d = parseLocalDate(dateRaw);
   const dateStr = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   if (!confirm('Credit ' + checked.length + ' members in ' + gName + ' for canceled class on ' + dateStr + '?')) return;
   if (typeof _pushUndo === 'function') _pushUndo('Credit ' + gName + ' (canceled class)');
@@ -2352,10 +2480,10 @@ function openChargeGroup(gName) {
     m.active &&
     !isCurrentlyPaused(m.name) &&
     m.group &&
-    m.group.toLowerCase().includes(gName.toLowerCase())
-  ).sort((a, b) => a.name.localeCompare(b.name));
+    _inGroup(m, gName)
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localISODate();
   // v30 BUGFIX: was hardcoded +15. Now uses default per-class so initial preview matches reality.
   const _dpcInit = _defaultPerClass();
   let listHTML = members.map((m, i) => {
@@ -2372,7 +2500,7 @@ function openChargeGroup(gName) {
   }).join('');
 
   document.getElementById('ov-charge-body').innerHTML =
-    '<div class="mh"><h2>💳 Charge Everyone — ' + gName + ' Group</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<div class="mh"><h2>💳 Charge Everyone — ' + esc(gName) + ' Group</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
     '<p style="color:#555;font-size:0.88rem;margin-bottom:14px">This will add a class charge to every active member. Members who owed money will owe more. Members with credit will have their credit reduced.</p>' +
     '<div class="fgrid">' +
       '<div class="fg"><label>Class Date *</label><input id="chg-date" type="date" value="' + today + '"></div>' +
@@ -2391,7 +2519,7 @@ function openChargeGroup(gName) {
     '</div>' +
     '<div class="factions">' +
       '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
-      '<button class="btn btn-orange" onclick="confirmChargeGroup(\'' + gName + '\')">💳 Apply Charge to Selected</button>' +
+      '<button class="btn btn-orange" onclick="confirmChargeGroup(\'' + escJs(gName) + '\')">💳 Apply Charge to Selected</button>' +
     '</div>';
   openOv('ov-charge');
 }
@@ -2407,7 +2535,7 @@ function updateChargePreview() {
     const m = DB.members.find(x => x.name === name);
     if (!m) return;
     const cells = row.querySelectorAll('td');
-    const newBal = m.balance + amt;
+    const newBal = (m.balance || 0) + _applyAllDiscounts(m, amt);
     cells[4].innerHTML = cb.checked ? balHTML(newBal) : '<em style="color:#aaa">skipped</em>';
   });
 }
@@ -2424,7 +2552,7 @@ function confirmChargeGroup(gName) {
     return;
   }
   // v22+v24: Smart confirmation — controlled by backend.smartChargeWarn toggle
-  const d = new Date(dateRaw);
+  const d = parseLocalDate(dateRaw);
   const dateStr = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const chargeWeekday = weekdays[d.getDay()];
@@ -2485,7 +2613,7 @@ function confirmChargeGroup(gName) {
 /* ============ ARCHIVED ============ */
 function filteredArchived() {
   const q = document.getElementById('aq').value.toLowerCase();
-  return DB.archived.filter(a => !q || a.name.toLowerCase().includes(q));
+  return DB.archived.filter(a => !q || (a.name || '').toLowerCase().includes(q));
 }
 function aRowHTML(a) {
   return '<tr class="arc-row">' +
@@ -2493,9 +2621,9 @@ function aRowHTML(a) {
     '<td>' + _esc(a.group || '—') + '</td>' +
     '<td>' + (a.archivedDate || '—') + '</td>' +
     '<td>' + balHTML(a.balance) + '</td>' +
-    '<td><button class="btn btn-blue btn-sm" onclick="openProfile(\'' + esc(a.name) + '\')">View History</button></td>' +
+    '<td><button class="btn btn-blue btn-sm" onclick="openProfile(\'' + escJs(a.name) + '\')">View History</button></td>' +
     (editMode
-      ? '<td class="edit-only"><button class="btn btn-green btn-sm" onclick="restoreMember(\'' + esc(a.name) + '\')">Restore</button></td>'
+      ? '<td class="edit-only"><button class="btn btn-green btn-sm" onclick="restoreMember(\'' + escJs(a.name) + '\')">Restore</button></td>'
       : '<td class="edit-only"></td>') +
     '</tr>';
 }
@@ -2603,6 +2731,10 @@ function restoreMember(name) {
   if (setNewStart) {
     m.startDate = todayStr();
   }
+  // Close any open profile/edit modal so it doesn't linger showing the stale "Former"
+  // badge and Restore button (bug #39).
+  closeOv('ov-edit');
+  closeOv('ov-profile');
   reRenderAll();
   alert('✅ "' + name + '" restored to active. Protected from being re-archived by sync or auto-archive for 60 days.');
 }
@@ -2615,7 +2747,7 @@ function openProfile(name) {
   const mPay = DB.payments.filter(p => p.name === name).sort((a, b) => new Date(b.date) - new Date(a.date));
   const mPause = DB.paused.filter(p => p.name === name);
   const isPaused = mPause.some(p => p.stillPaused);
-  const tot = mPay.filter(p => p.paid !== null).reduce((s, p) => s + p.paid, 0);
+  const tot = mPay.filter(p => p.paid !== null).reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
 
   let badge = arc ? '<span class="badge b-arc">Former</span>'
     : isPaused ? '<span class="badge b-pau">Paused</span>'
@@ -2624,24 +2756,24 @@ function openProfile(name) {
 
   let h = '<div class="mh"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><div>' + _avatarHTML(m, 56) + '</div><div><h2>' + _esc(m.name) + ' ' + badge + '</h2>' + (m.tags && m.tags.length ? '<div style="margin-top:4px">' + _memberTagsHTML(m) + '</div>' : '') + '</div></div>';
   h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
-  h += '<button class="btn btn-blue btn-sm" onclick="printStatement(\'' + esc(m.name) + '\')">🖨 Print Statement</button>';
+  h += '<button class="btn btn-blue btn-sm" onclick="printStatement(\'' + escJs(m.name) + '\')">🖨 Print Statement</button>';
   if (m.phone && m.balance > 0) {
-    h += '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + esc(m.name) + '\')">📱 SMS Reminder</button></span>';
+    h += '<span data-min-level="standard"><button class="btn btn-orange btn-sm" onclick="sendSMSReminder(\'' + escJs(m.name) + '\')">📱 SMS Reminder</button></span>';
     h += '<span data-min-level="pro">';
-    h += '<button class="btn btn-orange btn-sm" onclick="sendEmailReminder(\'' + esc(m.name) + '\')" title="Send email reminder" style="margin-left:4px">📧 Email</button>';
-    if (_featureOn('statementLink')) h += '<button class="btn btn-blue btn-sm" onclick="copyStatementLink(\'' + esc(m.name) + '\')" title="Copy shareable statement link" style="margin-left:4px">🔗 Link</button>';
-    if (_featureOn('qrCode')) h += '<button class="btn btn-blue btn-sm" onclick="showMemberQR(\'' + esc(m.name) + '\')" title="Show QR code" style="margin-left:4px">🧾 QR</button>';
+    h += '<button class="btn btn-orange btn-sm" onclick="sendEmailReminder(\'' + escJs(m.name) + '\')" title="Send email reminder" style="margin-left:4px">📧 Email</button>';
+    if (_featureOn('statementLink')) h += '<button class="btn btn-blue btn-sm" onclick="copyStatementLink(\'' + escJs(m.name) + '\')" title="Copy shareable statement link" style="margin-left:4px">🔗 Link</button>';
+    if (_featureOn('qrCode')) h += '<button class="btn btn-blue btn-sm" onclick="showMemberQR(\'' + escJs(m.name) + '\')" title="Show QR code" style="margin-left:4px">🧾 QR</button>';
     h += '</span>';
   }
   if (editMode && !arc) {
-    h += '<button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');openAddPayment(\'' + esc(m.name) + '\')">💰 + Pay</button>';
+    h += '<button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');openAddPayment(\'' + escJs(m.name) + '\')">💰 + Pay</button>';
     if (_featureOn('familyGrouping') && m.familyId && _familyMembers(m.familyId).length > 1) {
-      h += '<span data-min-level="pro"><button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');payAsFamily(\'' + esc(m.familyId) + '\')" title="Record one payment that splits across all members of ' + esc(m.familyId) + '">👨‍👩‍👧 Pay as Family</button></span>';
+      h += '<span data-min-level="pro"><button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');payAsFamily(\'' + escJs(m.familyId) + '\')" title="Record one payment that splits across all members of ' + esc(m.familyId) + '">👨‍👩‍👧 Pay as Family</button></span>';
     }
-    h += '<button class="btn btn-orange btn-sm" onclick="closeOv(\'ov-profile\');openEditMember(\'' + esc(m.name) + '\')">✏ Edit</button>';
-    h += '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + esc(m.name) + '\')">Archive</button>';
+    h += '<button class="btn btn-orange btn-sm" onclick="closeOv(\'ov-profile\');openEditMember(\'' + escJs(m.name) + '\')">✏ Edit</button>';
+    h += '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + escJs(m.name) + '\')">Archive</button>';
   }
-  if (editMode && arc) h += '<button class="btn btn-green btn-sm" onclick="restoreMember(\'' + esc(m.name) + '\')">Restore</button>';
+  if (editMode && arc) h += '<button class="btn btn-green btn-sm" onclick="restoreMember(\'' + escJs(m.name) + '\')">Restore</button>';
   h += '<button class="mclose" onclick="closeOv(\'ov-profile\')">✕</button></div></div>';
 
   h += '<div class="pgrid">' +
@@ -2658,7 +2790,7 @@ function openProfile(name) {
     '</div>';
 
   h += '<div class="shead">💰 Payment History (' + mPay.length + ' payments · $' + tot.toFixed(2) + ' total)' +
-    (editMode && !arc ? '<button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');openAddPayment(\'' + esc(m.name) + '\')">+ Add Payment</button>' : '') +
+    (editMode && !arc ? '<button class="btn btn-green btn-sm" onclick="closeOv(\'ov-profile\');openAddPayment(\'' + escJs(m.name) + '\')">+ Add Payment</button>' : '') +
     '</div>';
   h += mPay.length
     ? '<div class="tw"><table><thead><tr><th>#</th><th>Date</th><th>Paid</th><th>Group</th><th>Balance After</th></tr></thead><tbody>' +
@@ -2666,7 +2798,7 @@ function openProfile(name) {
         '<tr><td style="color:#aaa;font-size:0.78rem">' + (mPay.length - i) + '</td>' +
         '<td>' + p.date + '</td>' +
         '<td>' + (p.paid !== null ? '$' + (parseFloat(p.paid) || 0).toFixed(2) : '<span class="badge b-pau">⚠</span>') + '</td>' +
-        '<td>' + p.group + '</td>' +
+        '<td>' + esc(p.group || '') + '</td>' +
         '<td>' + balHTML(p.balance) + '</td></tr>'
       ).join('') +
       '</tbody></table></div>'
@@ -2676,7 +2808,7 @@ function openProfile(name) {
     h += '<div class="shead">⏸ Pause History</div>' +
       '<div class="tw"><table><thead><tr><th>Group</th><th>From</th><th>To</th><th>Classes</th><th>Status</th></tr></thead><tbody>' +
       mPause.map(p =>
-        '<tr><td>' + p.group + '</td><td>' + p.fromDate + '</td>' +
+        '<tr><td>' + esc(p.group || '') + '</td><td>' + esc(p.fromDate || '') + '</td>' +
         '<td>' + (p.toDate || '<em>Ongoing</em>') + '</td>' +
         '<td>' + p.classespaused + '</td>' +
         '<td>' + (p.stillPaused ? '<span class="badge b-pau">Paused</span>' : '<span class="badge b-act">Returned</span>') + '</td></tr>'
@@ -2694,7 +2826,7 @@ function openEditMember(name) {
   if (idx < 0) { alert('Member not found'); return; }
   const m = DB.members[idx];
   document.getElementById('ov-edit-body').innerHTML =
-    '<div class="mh"><h2>✏ Edit: ' + m.name + '</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
+    '<div class="mh"><h2>✏ Edit: ' + esc(m.name) + '</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
     '<div class="fgrid">' +
     '<div class="fg"><label>Name</label><input id="ef-name" value="' + esc(m.name) + '"></div>' +
     '<div class="fg"><label>Phone</label><input id="ef-phone" value="' + esc(m.phone || '') + '"></div>' +
@@ -2717,13 +2849,29 @@ function openEditMember(name) {
     '<button class="btn btn-green" onclick="saveEditMember(' + idx + ')">💾 Save Changes</button>' +
     '</div>' +
     '<div class="dbox"><h4>⚠ Archive Member</h4><p>Move to Former Members. History preserved.</p>' +
-    '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + esc(m.name) + '\')">Archive ' + m.name + '</button></div>';
+    '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + escJs(m.name) + '\')">Archive ' + esc(m.name) + '</button></div>';
   openOv('ov-edit');
 }
 function saveEditMember(idx) {
   if (typeof _pushUndo === 'function') _pushUndo('Edit member ' + (DB.members[idx] && DB.members[idx].name));
   const m = DB.members[idx];
-  m.name = document.getElementById('ef-name').value.trim();
+  const oldName = m.name;
+  const newName = document.getElementById('ef-name').value.trim();
+  // Rename safety (bug #3/#11): block a collision and propagate the new name to every
+  // record keyed by name (payments, pauses, archived), otherwise the member's whole
+  // history/money totals get orphaned and reports show a ghost under the old name.
+  if (newName && newName.toLowerCase() !== (oldName || '').toLowerCase()) {
+    const clash = DB.members.some((x, i) => i !== idx && (x.name || '').trim().toLowerCase() === newName.toLowerCase()) ||
+                  (DB.archived || []).some(a => (a.name || '').trim().toLowerCase() === newName.toLowerCase());
+    if (clash) { alert('⚠ A member named "' + newName + '" already exists. Pick a different name.'); return; }
+  }
+  m.name = newName;
+  if (newName && newName !== oldName) {
+    (DB.payments || []).forEach(p => { if (p.name === oldName) p.name = newName; });
+    (DB.paused || []).forEach(p => { if (p.name === oldName) p.name = newName; });
+    (DB.archived || []).forEach(a => { if (a.name === oldName) a.name = newName; });
+    _clearRestoreProtect(oldName);
+  }
   m.phone = document.getElementById('ef-phone').value.trim();
   m.group = readGroupPicker('ef-group-picker');
   // BUG FIX v13: Allow $0 (free members). Use isNaN check, not || which treats 0 as falsy.
@@ -2753,6 +2901,10 @@ function saveEditMember(idx) {
   const existingArc = DB.archived.find(a => a.name === m.name);
   if (m.endDate) {
     // Member has an end date → should be in Former Members
+    // Cancel any stale restore-protection flag (bug #4): without this, a previously
+    // restored member set back to Former Members via End Date would be silently
+    // un-archived again on the next reload/sync for up to 60 days.
+    _clearRestoreProtect(m.name);
     // End any ongoing pauses (BUG FIX v13: delete records, don't just mark)
     DB.paused = DB.paused.filter(p => !(p.name === m.name && p.stillPaused));
     if (!existingArc) {
@@ -2832,6 +2984,17 @@ function addNewMember() {
     discount: _featureOn('discounts') ? _readDiscount('ef') : null,
     recurring: _featureOn('recurringBilling') ? _readRecurring('ef') : null
   });
+  // If added with an End Date, mirror saveEditMember: put them in Former Members too,
+  // otherwise the member is active:false but absent from DB.archived — invisible in
+  // every list (bug #26).
+  if (end) {
+    DB.archived.push({
+      name: name,
+      group: readGroupPicker('ef-group-picker'),
+      balance: parseFloat(document.getElementById('ef-bal').value) || 0,
+      archivedDate: end
+    });
+  }
   logAction('member', 'add', 'Added new member: ' + name);
   closeOv('ov-edit');
   reRenderAll();
@@ -2845,7 +3008,7 @@ function openAddPayment(preset) {
     '<div class="mh"><h2>💰 Record Payment</h2><button class="mclose" onclick="closeOv(\'ov-pay\')">✕</button></div>' +
     '<div class="fgrid">' +
     '<div class="fg"><label>Member *</label><select id="ap-name" autocomplete="off"><option value="">— Select —</option>' + opts + '</select></div>' +
-    '<div class="fg"><label>Date *</label><input id="ap-date" type="date" autocomplete="off" value="' + new Date().toISOString().slice(0, 10) + '"></div>' +
+    '<div class="fg"><label>Date *</label><input id="ap-date" type="date" autocomplete="off" value="' + localISODate() + '"></div>' +
     '<div class="fg"><label>Amount Paid (' + _curr() + ') *</label><input id="ap-amt" type="number" autocomplete="off" placeholder="0"></div>' +
     '<div class="fg"><label>Method <span class="hint">(optional)</span></label><select id="ap-method" autocomplete="off"><option value="">—</option>' +
       (DB.settings.paymentMethods || []).map(pm => '<option value="' + esc(pm) + '">' + esc(pm) + '</option>').join('') +
@@ -2919,7 +3082,7 @@ function savePayment() {
     alert('Please select at least one group for this payment');
     return;
   }
-  const d = new Date(dateRaw);
+  const d = parseLocalDate(dateRaw);
   const dateStr = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   const newBal = parseFloat(document.getElementById('ap-new').value) || 0;
   const method = (document.getElementById('ap-method') || {}).value || '';
@@ -3012,18 +3175,20 @@ function doLookup() {
   const res = document.getElementById('l-result');
   if (q.length < 2) { res.innerHTML = ''; return; }
   const all = [...DB.members, ...DB.archived.filter(a => !DB.members.find(m => m.name === a.name))];
-  const hits = all.filter(m => m.name.toLowerCase().includes(q));
+  const hits = all.filter(m => (m.name || '').toLowerCase().includes(q));
   if (!hits.length) { res.innerHTML = '<p class="empty">No member found.</p>'; return; }
   if (hits.length === 1) { openProfile(hits[0].name); res.innerHTML = '<p style="color:#888;margin-top:10px">Showing: ' + hits[0].name + '</p>'; return; }
   res.innerHTML = '<div style="margin-bottom:10px;font-weight:600">' + hits.length + ' results:</div>' +
-    hits.map(m => '<div style="margin-bottom:6px"><button class="btn btn-blue" onclick="openProfile(\'' + esc(m.name) + '\')">' +
+    hits.map(m => '<div style="margin-bottom:6px"><button class="btn btn-blue" onclick="openProfile(\'' + escJs(m.name) + '\')">' +
       m.name + ' — ' + m.group + (isArchived(m.name) ? ' <span class="badge b-arc">Former</span>' : '') + '</button></div>').join('');
 }
 document.getElementById('lq').addEventListener('input', doLookup);
 
 /* ============ RE-RENDER ============ */
-function reRenderAll() {
-  saveDB();  // Auto-save on every change
+// Re-render every visible view WITHOUT saving. A cloud PULL must use this (not
+// reRenderAll) so it doesn't call saveDB — which would bump DB._savedAt to now and
+// schedule an outbound push, clobbering another device's newer change (bug #5).
+function renderAllViews() {
   initDashboard();
   renderMembers();
   renderPayments();
@@ -3034,6 +3199,10 @@ function reRenderAll() {
   if (document.getElementById('tab-paused').classList.contains('active')) renderPaused();
   if (document.getElementById('tab-archived').classList.contains('active')) renderArchived();
   if (document.getElementById('tab-notes').classList.contains('active')) renderNotes();
+}
+function reRenderAll() {
+  saveDB();  // Auto-save on every change
+  renderAllViews();
 }
 
 
@@ -5239,7 +5408,7 @@ function _maybeRenderStatementHash() {
   if (!name) return false;
   const member = DB.members.find(x => x.name === name) || (DB.archived || []).find(x => x.name === name);
   if (!member) return false;
-  const tot = (DB.payments || []).filter(p => p.name === name && p.paid !== null).reduce((s, p) => s + p.paid, 0);
+  const tot = (DB.payments || []).filter(p => p.name === name && p.paid !== null).reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
   const balance = member.balance || 0;
   const appName = (DB.settings.branding && DB.settings.branding.name) || 'Exercise Group';
   document.body.innerHTML =
@@ -5271,7 +5440,7 @@ function showMemberQR(name) {
   const url = location.origin + location.pathname + '#statement=' + token;
   const qrImg = _qrUrl(url, 280);
   const w = window.open('', '_blank', 'width=400,height=520');
-  w.document.write('<!DOCTYPE html><html><head><title>QR — ' + name + '</title><style>body{font-family:Arial;padding:24px;text-align:center}@media print{button{display:none}}</style></head><body>' +
+  w.document.write('<!DOCTYPE html><html><head><title>QR — ' + esc(name) + '</title><style>body{font-family:Arial;padding:24px;text-align:center}@media print{button{display:none}}</style></head><body>' +
     '<h2>' + esc(name) + '</h2>' +
     '<img src="' + qrImg + '" style="max-width:100%;border:1px solid #ccc;border-radius:8px">' +
     '<p style="font-size:0.8rem;color:#666;word-break:break-all">' + esc(url) + '</p>' +
@@ -5455,7 +5624,7 @@ function renderReports() {
   const topRows = top.map((name, i) => {
     const m = DB.members.find(x => x.name === name) || (DB.archived || []).find(x => x.name === name) || { name: name };
     return '<tr><td style="text-align:center;color:#888;width:30px">' + (i + 1) + '</td>' +
-      '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 24) + '<span>' + esc(name) + '</span></a></div></td>' +
+      '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + escJs(name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 24) + '<span>' + esc(name) + '</span></a></div></td>' +
       '<td style="text-align:right;font-weight:700">' + _money(byMember[name]) + '</td></tr>';
   }).join('') || '<tr><td colspan="3" class="empty">No data yet</td></tr>';
 
@@ -5463,7 +5632,7 @@ function renderReports() {
   const owers = DB.members.filter(m => m.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 10);
   const owerRows = owers.map((m, i) =>
     '<tr><td style="text-align:center;color:#888;width:30px">' + (i + 1) + '</td>' +
-      '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + esc(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 24) + '<span>' + esc(m.name) + '</span></a></div></td>' +
+      '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + escJs(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 24) + '<span>' + esc(m.name) + '</span></a></div></td>' +
       '<td style="text-align:right;font-weight:700;color:#c0392b">' + _money(m.balance) + '</td></tr>'
   ).join('') || '<tr><td colspan="3" class="empty">🎉 Nobody owes</td></tr>';
 
@@ -5764,9 +5933,18 @@ async function _eg_supabasePull(url, anonKey, userId) {
 
 // The main sync orchestrator — push, pull, or auto (newer wins)
 let _eg_syncInFlight = false;
-async function syncNow(direction, opts) {
-  if (_eg_syncInFlight) return { skipped: 'in-flight' };
+let _eg_syncPromise = null;
+// Wrapper: when a sync is already running, RETURN THE IN-FLIGHT PROMISE instead of a
+// synchronous {skipped:'in-flight'}. That way `await syncNow(...)` genuinely waits for the
+// running sync to finish — without this, pre-billing ran against not-yet-pulled stale data
+// and could double-charge (bug #6).
+function syncNow(direction, opts) {
+  if (_eg_syncInFlight && _eg_syncPromise) return _eg_syncPromise;
   _eg_syncInFlight = true;
+  _eg_syncPromise = _eg_syncNowImpl(direction, opts).finally(() => { _eg_syncInFlight = false; _eg_syncPromise = null; });
+  return _eg_syncPromise;
+}
+async function _eg_syncNowImpl(direction, opts) {
   // v27: silent param skips the floating indicator (used by auto-sync after every save)
   const silent = !!(opts && opts.silent);
   if (!silent) _eg_setSyncStatus('syncing', 'Syncing…');
@@ -5802,17 +5980,21 @@ async function syncNow(direction, opts) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
       idbSet(STORAGE_KEY, DB).catch(() => {});
       didPull = true;
-      reRenderAll();
+      // Render WITHOUT saveDB so _savedAt stays == cloudTs and no push is scheduled (bug #5).
+      renderAllViews();
     }
-    cfg.lastSyncAt = Date.now();
-    cfg.lastSyncDirection = didPush ? 'push' : (didPull ? 'pull' : 'no-change');
-    cfg.lastSyncError = '';
+    // Write sync metadata onto the CURRENT DB.settings.backend. After a pull, `cfg`
+    // points at the discarded pre-pull object, so re-read it (bug #45).
+    const cfg2 = DB.settings.backend;
+    cfg2.lastSyncAt = Date.now();
+    cfg2.lastSyncDirection = didPush ? 'push' : (didPull ? 'pull' : 'no-change');
+    cfg2.lastSyncError = '';
     // v29 BUGFIX: persist DB without bumping DB._savedAt (which would break the
     // localTs > cloudTs comparison on the next sync and cause permanent push-only behavior).
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
     idbSet(STORAGE_KEY, DB).catch(() => {});
     // v29: visible decision log so cross-browser sync issues are debuggable from the console.
-    console.log('[sync]', cfg.lastSyncDirection, '| direction:', direction, '| localTs:', new Date(localTs).toISOString(), '| cloudTs:', cloudTs ? new Date(cloudTs).toISOString() : 'none');
+    console.log('[sync]', cfg2.lastSyncDirection, '| direction:', direction, '| localTs:', new Date(localTs).toISOString(), '| cloudTs:', cloudTs ? new Date(cloudTs).toISOString() : 'none');
     // v27: only show the big floating indicator when NOT silent (i.e., for manual syncs / errors)
     if (!silent) _eg_setSyncStatus('ok', didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced'));
     _eg_updateHeaderSyncPill('ok');
@@ -5826,9 +6008,8 @@ async function syncNow(direction, opts) {
     _eg_setSyncStatus('err', '⚠ Sync failed: ' + e.message);
     _eg_updateHeaderSyncPill('err');
     return { ok: false, error: e.message };
-  } finally {
-    _eg_syncInFlight = false;
   }
+  // Note: _eg_syncInFlight / _eg_syncPromise are reset by the syncNow() wrapper's .finally.
 }
 
 // v27: small persistent ☁ pill in the header — subtle status indicator
@@ -6000,7 +6181,7 @@ async function _eg_testCloudSync() {
     if (arr.length === 0) {
       alert('✅ Connection works!\n\nNo data in cloud yet for this passphrase. Click "Save & activate sync" to push your current data up.');
     } else {
-      alert('✅ Connection works! Found existing cloud data for this passphrase (last updated by another device). Click "Save & activate sync" — the cloud version will be pulled down.');
+      alert('✅ Connection works! Found existing cloud data for this passphrase (saved by another device).\n\nClick "Save & activate sync" — you\'ll be asked whether to pull the cloud copy down (recommended) or overwrite it with this device.');
     }
   } catch (e) {
     alert('❌ Connection error: ' + e.message + '\n\nTried URL: ' + url);
@@ -6013,24 +6194,76 @@ async function _eg_saveCloudSync() {
   const pass = (document.getElementById('sync-pass').value || '').trim();
   if (!url || !key || !pass) { alert('Fill in all three: URL, anon key, passphrase.'); return; }
   if (pass.length < 8) { alert('Passphrase must be at least 8 characters.'); return; }
-  if (!confirm('Activate cloud sync now?\n\nFirst sync will compare local data with cloud and use whichever is newer.')) return;
   _ensureSettingsSchema();
+
+  // CRITICAL (bug #1/#7): check whether the cloud ALREADY holds data for this passphrase
+  // BEFORE deciding push vs pull. A fresh/second device that just pushes 'auto' would
+  // overwrite the established cloud copy (its just-saved _savedAt looks "newer"), wiping
+  // every other device. So: if a cloud backup exists, make the user choose, defaulting to
+  // pulling the cloud copy down.
+  let cloudCount = null;
+  try {
+    const userId = await _eg_userIdFromPassphrase(pass);
+    const cloudRow = await _eg_supabasePull(url, key, userId);
+    if (cloudRow && cloudRow.data) {
+      try {
+        const dec = await _eg_decrypt(cloudRow.data, pass);
+        cloudCount = (dec && Array.isArray(dec.members)) ? dec.members.length : 0;
+      } catch (e) {
+        alert('❌ A cloud backup already exists for this passphrase, but it could NOT be unlocked with the passphrase you typed.\n\nThe passphrase must match the other device EXACTLY. Sync was not activated (nothing was changed).');
+        return;
+      }
+    }
+  } catch (e) {
+    if (!confirm('⚠ Could not reach the cloud to check for existing data (' + e.message + ').\n\nActivate sync anyway? If a cloud backup exists, continuing could overwrite it.')) return;
+  }
+
+  let direction = 'push'; // no cloud data yet → this is the first device, push local up
+  if (cloudCount !== null) {
+    const localCount = (DB.members || []).length;
+    // OK = pull (cloud wins, recommended), Cancel = push (overwrite cloud with this device)
+    const pull = confirm(
+      '☁ This passphrase already has a cloud backup with ' + cloudCount + ' member(s), saved from another device.\n' +
+      'THIS device currently has ' + localCount + ' member(s).\n\n' +
+      '• Click OK to PULL the cloud data down (recommended — keeps the shared copy).\n' +
+      '• Click Cancel to PUSH this device up instead, OVERWRITING the cloud ' + cloudCount + '-member backup with this device\'s ' + localCount + ' member(s).'
+    );
+    direction = pull ? 'pull' : 'push';
+    if (direction === 'push' && !confirm('Are you sure? This will REPLACE the cloud ' + cloudCount + '-member backup with this device\'s ' + localCount + ' member(s). This cannot be undone.')) return;
+  }
+
   DB.settings.backend.supabaseUrl = url;
   DB.settings.backend.supabaseAnonKey = key;
   DB.settings.backend.syncPassphrase = pass;
   DB.settings.backend.cloudSyncProvider = 'supabase';
-  saveDB();
   closeOv('ov-edit');
-  // Trigger first sync
-  const result = await syncNow('auto');
-  if (result.ok) {
-    alert('☁ Cloud sync activated!\n\n' +
-      (result.didPush ? 'Your local data was pushed to the cloud. Other devices using the same passphrase will now sync.' :
-       result.didPull ? 'Newer data was pulled FROM the cloud. Your local data has been replaced.' :
-       'Cloud and local were already in sync.') +
-      '\n\nFrom now on: every save also syncs to the cloud (toggle in Advanced).');
+
+  const result = await syncNow(direction);
+  if (direction === 'pull') {
+    // Pull replaced DB with the cloud copy — re-assert THIS device's sync credentials so
+    // sync keeps working, then persist without bumping _savedAt (bug #32).
+    _ensureSettingsSchema();
+    DB.settings.backend.supabaseUrl = url;
+    DB.settings.backend.supabaseAnonKey = key;
+    DB.settings.backend.syncPassphrase = pass;
+    DB.settings.backend.cloudSyncProvider = 'supabase';
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
+    idbSet(STORAGE_KEY, DB).catch(() => {});
+    renderAllViews();
+  } else {
+    // First-device / overwrite push: persist the newly-set credentials locally.
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
+    idbSet(STORAGE_KEY, DB).catch(() => {});
   }
-  // Refresh Advanced view if open
+
+  if (result && result.ok) {
+    alert('☁ Cloud sync activated!\n\n' +
+      (result.didPull ? 'The cloud data was pulled down to this device.' :
+       'This device\'s data was pushed to the cloud. Other devices using the same passphrase will now sync.') +
+      '\n\nFrom now on: every save also syncs to the cloud (toggle in Advanced).');
+  } else if (result && !result.ok) {
+    alert('⚠ Sync activation had a problem: ' + (result.error || 'unknown') + '\n\nYour settings were saved — try "Sync now" from Advanced.');
+  }
   if (document.getElementById('tab-advanced').classList.contains('active')) renderAdvanced();
 }
 
@@ -6746,7 +6979,10 @@ function _money(n) {
   const parts = fixed.split('.');
   // Inject thousands separator
   parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, thou);
-  const numStr = parts.join('.');
+  // Decimal mark must differ from the thousands mark, else "1.234.50" is ambiguous.
+  // European period-thousands → comma decimal: "1.234,50" (bug #50).
+  const decMark = (thou === '.') ? ',' : '.';
+  const numStr = parts.join(decMark);
   const cur = _curr();
   const sym = pos === 'after' ? (numStr + cur) : (cur + numStr);
   if (isNeg) return negStyle === 'parens' ? '(' + sym + ')' : '-' + sym;
@@ -6773,7 +7009,7 @@ function _fillSmsTemplate(m, balance) {
     .replace(/\{firstName\}/g, m.name.split(' ')[0])
     .replace(/\{name\}/g, m.name)
     .replace(/\{currency\}/g, _curr())
-    .replace(/\{balance\}/g, Math.round(balance || 0).toString())
+    .replace(/\{balance\}/g, (balance || 0).toFixed((DB.settings && DB.settings.backend && typeof DB.settings.backend.decimalPlaces === 'number') ? DB.settings.backend.decimalPlaces : 2))
     .replace(/\{appName\}/g, (DB.settings && DB.settings.branding && DB.settings.branding.name) || 'Exercise Group');
 }
 function _syncDerivedLists() {
@@ -7604,6 +7840,9 @@ function setBackend(key, value) {
   else if (setTab && setTab.classList.contains('active') && typeof renderSettings === 'function') renderSettings();
   // For some keys, also re-render the entire app (member labels affect everywhere)
   if (key === 'currencyPosition' || key === 'decimalPlaces' || key === 'thousandsSeparator' || key === 'negativeStyle') reRenderAll();
+  // Birthday widget is data-conditional — re-run the dashboard so it shows/hides correctly
+  // when toggled (can't just force display:'' — bug #49).
+  if (key === 'dashShowBirthdays' && typeof initDashboard === 'function') initDashboard();
 }
 function applyCustomCSS() {
   _ensureSettingsSchema();
@@ -7753,7 +7992,14 @@ function addPaymentMethod() {
 function renamePaymentMethod(i, newName) {
   _ensureSettingsSchema();
   const v = (newName || '').trim(); if (!v) { renderSettings(); return; }
-  DB.settings.paymentMethods[i] = v; saveDB();
+  const oldMethod = DB.settings.paymentMethods[i];
+  DB.settings.paymentMethods[i] = v;
+  // Cascade the rename to existing payments so reports don't split the method (bug #48).
+  if (oldMethod && oldMethod !== v) {
+    (DB.payments || []).forEach(p => { if (p.method === oldMethod) p.method = v; });
+  }
+  saveDB();
+  renderSettings();
 }
 function movePaymentMethod(i, dir) {
   _ensureSettingsSchema();
@@ -7961,13 +8207,23 @@ function renameGroup(i, newName, oldName) {
   if (!lbl) { renderSettings(); return; }
   if (lbl.toLowerCase() === (oldName || '').toLowerCase()) { g.name = lbl; saveDB(); return; }
   if (DB.groups.some((x, j) => j !== i && x.name.toLowerCase() === lbl.toLowerCase())) { alert('A group with that name already exists.'); renderSettings(); return; }
-  // Cascade: rename in members and payments
-  const oldRe = new RegExp('\\b' + (oldName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi');
+  // Cascade: rename in members and payments. Match WHOLE comma-separated group tokens
+  // exactly (not a \b substring regex, which corrupted overlapping names like "Adults"
+  // inside "Young Adults" — bug #29).
+  const oldLc = (oldName || '').toLowerCase();
+  const renameTokens = (str) => {
+    let changed = false;
+    const out = String(str).split(',').map(tok => {
+      if (tok.trim().toLowerCase() === oldLc) { changed = true; return lbl; }
+      return tok.trim();
+    }).join(', ');
+    return { out, changed };
+  };
   let touched = 0;
-  DB.members.forEach(m => { if (m.group && oldRe.test(m.group)) { m.group = m.group.replace(oldRe, lbl); touched++; } });
-  DB.payments.forEach(p => { if (p.group && oldRe.test(p.group)) { p.group = p.group.replace(oldRe, lbl); } });
-  if (Array.isArray(DB.paused)) DB.paused.forEach(p => { if (p.group && oldRe.test(p.group)) p.group = p.group.replace(oldRe, lbl); });
-  if (Array.isArray(DB.archived)) DB.archived.forEach(a => { if (a.group && oldRe.test(a.group)) a.group = a.group.replace(oldRe, lbl); });
+  DB.members.forEach(m => { if (m.group) { const r = renameTokens(m.group); if (r.changed) { m.group = r.out; touched++; } } });
+  DB.payments.forEach(p => { if (p.group) { const r = renameTokens(p.group); if (r.changed) p.group = r.out; } });
+  if (Array.isArray(DB.paused)) DB.paused.forEach(p => { if (p.group) { const r = renameTokens(p.group); if (r.changed) p.group = r.out; } });
+  if (Array.isArray(DB.archived)) DB.archived.forEach(a => { if (a.group) { const r = renameTokens(a.group); if (r.changed) a.group = r.out; } });
   g.name = lbl;
   _syncDerivedLists();
   logAction('group', 'edit', 'Renamed group "' + oldName + '" → "' + lbl + '" (' + touched + ' members updated)');
