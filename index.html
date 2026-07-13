@@ -2310,6 +2310,7 @@ function confirmMonthlyChargeGroup(gName) {
 
   if (!DB.classes) DB.classes = [];
   DB.classes.unshift({
+    id: 'mc_' + Date.now() + '_' + Math.floor(grand),  // stable handle for Undo
     date: localISODate(),
     day: gName,
     monthly: true,
@@ -2318,6 +2319,8 @@ function confirmMonthlyChargeGroup(gName) {
     classCount: n,
     count: checked.length,
     amount: grand,
+    // Per-member breakdown so this exact charge can be Undone precisely later (feature #1).
+    lines: details.map(d => ({ name: d.m.name, amt: d.lineAmt, classes: n })),
     savedAt: Date.now(),
   });
   logAction('payment', 'monthly', 'Monthly bill ' + gName + ' × ' + n + ' (' + monthLabel + ') — ' + checked.length + ' members, ' + _money(grand));
@@ -2366,7 +2369,7 @@ function openBillingHistory() {
     body += '<span>' + _money(monthTotal) + ' total</span>';
     body += '</div>';
     body += '<div class="tw"><table style="margin:0;border-radius:0 0 8px 8px;overflow:hidden">';
-    body += '<thead><tr><th>Group</th><th>Classes</th><th>Members billed</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
+    body += '<thead><tr><th>Group</th><th>Classes</th><th>Members billed</th><th>Amount</th><th>Date</th><th></th></tr></thead><tbody>';
     rows.sort((a, b) => (a.day || '').localeCompare(b.day || '')).forEach(r => {
       body += '<tr>';
       body += '<td><strong>' + esc(r.day || '—') + '</strong></td>';
@@ -2374,6 +2377,12 @@ function openBillingHistory() {
       body += '<td>' + (r.count || '?') + '</td>';
       body += '<td><strong>' + _money(r.amount || 0) + '</strong></td>';
       body += '<td style="color:#888;font-size:0.82rem">' + (r.date || '—') + '</td>';
+      // Undo button — precise reversal for charges that stored a per-member breakdown.
+      if (r.id && Array.isArray(r.lines)) {
+        body += '<td><button class="btn btn-red btn-sm" onclick="undoMonthlyCharge(\'' + escJs(r.id) + '\')" title="Reverse this charge — refunds each member and removes the record">↩ Undo</button></td>';
+      } else {
+        body += '<td><span style="color:#bbb;font-size:0.72rem" title="This charge was made before undo was added, so there is no saved breakdown to reverse safely.">older charge</span></td>';
+      }
       body += '</tr>';
     });
     body += '</tbody></table></div></div>';
@@ -2388,6 +2397,38 @@ function openBillingHistory() {
 
   document.getElementById('ov-billing-history-body').innerHTML = html;
   openOv('ov-billing-history');
+}
+
+// Feature #1: Undo a whole "Charge for Month" — reverses each member's balance/owed/classes
+// using the saved per-member breakdown, then removes the billing record.
+function undoMonthlyCharge(id) {
+  const idx = (DB.classes || []).findIndex(c => c && c.id === id && c.monthly);
+  if (idx < 0) { alert('That charge was not found (it may have already been undone).'); return; }
+  const rec = DB.classes[idx];
+  if (!Array.isArray(rec.lines)) { alert('This charge has no saved breakdown, so it cannot be undone automatically.'); return; }
+  const label = rec.monthLabel || rec.monthKey || rec.date || '';
+  if (!confirm('Undo the ' + (rec.day || '') + ' charge for ' + label + '?\n\n' +
+    'This refunds ' + rec.lines.length + ' member(s) a total of ' + _money(rec.amount || 0) + ' (their balances go back down) and removes this billing record.\n\nContinue?')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Undo monthly bill ' + (rec.day || '') + ' ' + label);
+
+  let reversed = 0, missing = [];
+  rec.lines.forEach(ln => {
+    const m = DB.members.find(x => x.name === ln.name) || (DB.archived || []).find(a => a.name === ln.name);
+    if (!m) { missing.push(ln.name); return; }
+    const amt = parseFloat(ln.amt) || 0;
+    m.balance = (m.balance || 0) - amt;
+    if (typeof m.totalOwed === 'number') m.totalOwed = Math.max(0, (m.totalOwed || 0) - amt);
+    if (typeof m.totalClasses === 'number') m.totalClasses = Math.max(0, (m.totalClasses || 0) - (parseInt(ln.classes) || 0));
+    reversed++;
+  });
+
+  DB.classes.splice(idx, 1);
+  logAction('payment', 'monthly', 'UNDID monthly bill ' + (rec.day || '') + ' (' + label + ') — reversed ' + reversed + ' member(s), ' + _money(rec.amount || 0));
+  saveDB();
+  reRenderAll();
+  closeOv('ov-billing-history');
+  alert('↩ Undone. Refunded ' + reversed + ' member(s) ' + _money(rec.amount || 0) + '.' +
+    (missing.length ? '\n\nNote: ' + missing.length + ' member(s) no longer exist and were skipped: ' + missing.join(', ') : ''));
 }
 
 // v25: Credit Everyone — for canceled class days when in prepay mode
