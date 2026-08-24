@@ -2664,7 +2664,8 @@ function aRowHTML(a) {
     '<td>' + balHTML(a.balance) + '</td>' +
     '<td><button class="btn btn-blue btn-sm" onclick="openProfile(\'' + escJs(a.name) + '\')">View History</button></td>' +
     (editMode
-      ? '<td class="edit-only"><button class="btn btn-green btn-sm" onclick="restoreMember(\'' + escJs(a.name) + '\')">Restore</button></td>'
+      ? '<td class="edit-only"><button class="btn btn-green btn-sm" onclick="restoreMember(\'' + escJs(a.name) + '\')">Restore</button> ' +
+        '<button class="btn btn-red btn-sm" onclick="deleteMemberPermanently(\'' + escJs(a.name) + '\')" title="Erase this person and ALL their data forever — cannot be undone">🗑 Delete forever</button></td>'
       : '<td class="edit-only"></td>') +
     '</tr>';
 }
@@ -2717,6 +2718,81 @@ function archiveMember(name) {
   reRenderAll();
   alert('✅ "' + name + '" archived.');
 }
+// Count every trace of a member across the whole database. Used by the permanent-delete
+// flow so the user sees exactly what is about to be erased before confirming.
+function _memberFootprint(name) {
+  const key = String(name || '').trim().toLowerCase();
+  const eq = s => String(s || '').trim().toLowerCase() === key;
+  const monthlyLines = [];
+  (DB.classes || []).forEach(c => {
+    if (c && Array.isArray(c.lines)) c.lines.forEach(ln => { if (eq(ln.name)) monthlyLines.push({ rec: c, ln: ln }); });
+  });
+  return {
+    key: key,
+    members: (DB.members || []).filter(m => eq(m.name)),
+    archived: (DB.archived || []).filter(a => eq(a.name)),
+    payments: (DB.payments || []).filter(p => eq(p.name)),
+    paused: (DB.paused || []).filter(p => eq(p.name)),
+    monthlyLines: monthlyLines,
+    logs: (DB._log || []).filter(e => e && typeof e.details === 'string' && e.details.toLowerCase().includes(key))
+  };
+}
+// Permanently delete a member and EVERY trace of them. This is different from Archive
+// (which only moves them to Former Members and keeps all their data). Irreversible except
+// via the automatic backup this offers first.
+function deleteMemberPermanently(name) {
+  const fp = _memberFootprint(name);
+  const total = fp.members.length + fp.archived.length + fp.payments.length + fp.paused.length + fp.monthlyLines.length + fp.logs.length;
+  if (!total) { alert('Nothing found for "' + name + '" — there is no data left to delete.'); return; }
+  const paidSum = fp.payments.reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
+  const bal = fp.members.length ? (fp.members[0].balance || 0) : (fp.archived.length ? (fp.archived[0].balance || 0) : 0);
+
+  if (!confirm(
+    '🗑 PERMANENTLY DELETE "' + name + '" and ALL their data?\n\n' +
+    'This will erase:\n' +
+    '• ' + fp.members.length + ' member record(s)' + (bal ? '  (balance ' + _money(bal) + ')' : '') + '\n' +
+    '• ' + fp.archived.length + ' Former-Members entry(ies)\n' +
+    '• ' + fp.payments.length + ' payment record(s)' + (paidSum ? '  (' + _money(paidSum) + ' total)' : '') + '\n' +
+    '• ' + fp.paused.length + ' pause record(s)\n' +
+    '• ' + fp.monthlyLines.length + ' monthly-billing line(s)\n' +
+    '• ' + fp.logs.length + ' activity-log entry(ies)\n\n' +
+    'This CANNOT be undone. Continue?'
+  )) return;
+  if (!confirm('Last check — really delete "' + name + '" and all ' + total + ' record(s) forever?')) return;
+
+  if (typeof _pushUndo === 'function') _pushUndo('Delete member ' + name);
+  const eq = s => String(s || '').trim().toLowerCase() === fp.key;
+
+  DB.members = (DB.members || []).filter(m => !eq(m.name));
+  DB.archived = (DB.archived || []).filter(a => !eq(a.name));
+  DB.payments = (DB.payments || []).filter(p => !eq(p.name));
+  DB.paused = (DB.paused || []).filter(p => !eq(p.name));
+  // Strip their lines out of monthly billing records and correct that record's totals.
+  (DB.classes || []).forEach(c => {
+    if (!c || !Array.isArray(c.lines)) return;
+    const keep = c.lines.filter(ln => !eq(ln.name));
+    if (keep.length !== c.lines.length) {
+      const removedAmt = c.lines.filter(ln => eq(ln.name)).reduce((s, ln) => s + (parseFloat(ln.amt) || 0), 0);
+      c.lines = keep;
+      c.amount = Math.max(0, (c.amount || 0) - removedAmt);
+      c.count = keep.length;
+    }
+  });
+  // Drop empty monthly records left behind.
+  DB.classes = (DB.classes || []).filter(c => !(c && c.monthly && Array.isArray(c.lines) && c.lines.length === 0));
+  if (Array.isArray(DB._log)) DB._log = DB._log.filter(e => !(e && typeof e.details === 'string' && e.details.toLowerCase().includes(fp.key)));
+  _clearRestoreProtect(name);
+
+  // Deliberately does NOT include the name — the whole point is to leave no trace of it.
+  logAction('member', 'delete', 'Permanently deleted a member and all their data (' + total + ' record(s))');
+  closeOv('ov-edit');
+  closeOv('ov-profile');
+  saveDB();
+  reRenderAll();
+  alert('🗑 "' + name + '" and all ' + total + ' record(s) permanently deleted.' +
+    (_isCloudSyncActive() ? '\n\nThe change will sync to your other devices.' : ''));
+}
+
 // v32: Device-local restore protection — survives sync overwrites.
 // Stored outside the main DB so a cloud pull can't erase it.
 function _setRestoreProtect(name) {
