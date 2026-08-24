@@ -2891,6 +2891,9 @@ function openProfile(name) {
     h += '<button class="btn btn-red btn-sm" onclick="archiveMember(\'' + escJs(m.name) + '\')">Archive</button>';
   }
   if (editMode && arc) h += '<button class="btn btn-green btn-sm" onclick="restoreMember(\'' + escJs(m.name) + '\')">Restore</button>';
+  // Permanent delete is available from the profile too, so a leftover member can always be
+  // fully purged even if they don't show up in the Former Members list.
+  if (editMode) h += '<button class="btn btn-red btn-sm" onclick="deleteMemberPermanently(\'' + escJs(m.name) + '\')" title="Erase this person and ALL their data forever — cannot be undone">🗑 Delete forever</button>';
   h += '<button class="mclose" onclick="closeOv(\'ov-profile\')">✕</button></div></div>';
 
   h += '<div class="pgrid">' +
