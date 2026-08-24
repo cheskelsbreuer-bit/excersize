@@ -518,6 +518,8 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
         <button class="menu-item" onclick="showTab('settings');toggleMenu()">⚙ Open Settings</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="openDataCleanup();toggleMenu()">🧹 Fix My Numbers (Cleanup)</button>
+        <button class="menu-item" onclick="openTrash();toggleMenu()">♻ Recycle Bin</button>
+        <button class="menu-item" onclick="openRepairTotals();toggleMenu()">🩺 Check &amp; Repair Totals</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
       </div>
@@ -600,8 +602,18 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
     </select>
     <button class="btn btn-green edit-only" onclick="openAddMember()">+ Add Member</button>
   </div>
+  <div id="m-bulkbar" class="edit-only" style="display:none;background:#1a3a5c;color:#fff;padding:9px 13px;border-radius:8px;margin-bottom:10px;align-items:center;gap:8px;flex-wrap:wrap">
+    <strong id="m-bulkcount" style="margin-right:4px">0 selected</strong>
+    <button class="btn btn-green btn-sm" onclick="bulkAddPayment()">💰 Record Payment</button>
+    <button class="btn btn-orange btn-sm" onclick="bulkCharge()">💳 Charge</button>
+    <button class="btn btn-blue btn-sm" onclick="bulkChangeGroup()">🗂 Change Group</button>
+    <button class="btn btn-gray btn-sm" onclick="bulkArchive()">🗃 Archive</button>
+    <button class="btn btn-red btn-sm" onclick="bulkDelete()">🗑 Delete</button>
+    <button class="btn btn-gray btn-sm" onclick="bulkClear()">✕ Clear</button>
+  </div>
   <div class="tw"><table>
     <thead><tr>
+      <th class="edit-only" style="width:30px"><input type="checkbox" id="m-checkall" onchange="bulkToggleAll(this.checked)" title="Select all on this page"></th>
       <th class="sort" data-f="name">Name ↕</th>
       <th>Group</th>
       <th class="sort" data-f="balance">Balance ↕</th>
@@ -1756,10 +1768,145 @@ function filteredMembers() {
     return mSort.asc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 }
+/* ============ BULK ACTIONS — do one thing to many members at once ============ */
+let _bulkSel = {};                       // name -> true, survives re-renders and paging
+function bulkNames() { return Object.keys(_bulkSel).filter(n => _bulkSel[n]); }
+function bulkRefresh() {
+  document.querySelectorAll('.m-sel').forEach(cb => {
+    const n = cb.getAttribute('data-name');
+    if (cb.checked) _bulkSel[n] = true; else delete _bulkSel[n];
+  });
+  const names = bulkNames();
+  const bar = document.getElementById('m-bulkbar');
+  if (bar) {
+    bar.style.display = (editMode && names.length) ? 'flex' : 'none';
+    const c = document.getElementById('m-bulkcount');
+    if (c) c.textContent = names.length + ' selected';
+  }
+}
+function bulkToggleAll(on) {
+  document.querySelectorAll('.m-sel').forEach(cb => {
+    cb.checked = on;
+    const n = cb.getAttribute('data-name');
+    if (on) _bulkSel[n] = true; else delete _bulkSel[n];
+  });
+  bulkRefresh();
+}
+function bulkClear() {
+  _bulkSel = {};
+  document.querySelectorAll('.m-sel').forEach(cb => { cb.checked = false; });
+  const ca = document.getElementById('m-checkall'); if (ca) ca.checked = false;
+  bulkRefresh();
+}
+function _bulkMembers() { return bulkNames().map(n => DB.members.find(m => m.name === n)).filter(Boolean); }
+function bulkCharge() {
+  const list = _bulkMembers(); if (!list.length) return;
+  const raw = prompt('Charge how much to each of the ' + list.length + ' selected member(s)?\n\n(Their individual discounts are applied automatically.)', String(_defaultPerClass()));
+  if (raw === null) return;
+  const amt = parseFloat(raw);
+  if (isNaN(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
+  let total = 0;
+  const preview = list.map(m => { const a = _applyAllDiscounts(m, amt); total += a; return a; });
+  if (!confirm('Charge ' + list.length + ' member(s) ' + _money(amt) + ' each?\n\nTotal after discounts: ' + _money(total))) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Bulk charge ' + list.length + ' members');
+  list.forEach((m, i) => {
+    m.balance = (m.balance || 0) + preview[i];
+    m.totalOwed = (m.totalOwed || 0) + preview[i];
+    m.totalClasses = (m.totalClasses || 0) + 1;
+  });
+  logAction('payment', 'bulk', 'Bulk charged ' + list.length + ' members ' + _money(amt) + ' each (' + _money(total) + ')');
+  saveDB(); reRenderAll();
+  alert('✅ Charged ' + list.length + ' member(s). Total ' + _money(total) + '.');
+}
+function bulkAddPayment() {
+  const list = _bulkMembers(); if (!list.length) return;
+  const raw = prompt('Record a payment of how much from EACH of the ' + list.length + ' selected member(s)?', '');
+  if (raw === null) return;
+  const amt = parseFloat(raw);
+  if (isNaN(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
+  if (!confirm('Record ' + _money(amt) + ' from each of ' + list.length + ' member(s)?\n\nTotal received: ' + _money(amt * list.length))) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Bulk payment ' + list.length + ' members');
+  const today = todayStr();
+  list.forEach(m => {
+    m.totalPaid = (m.totalPaid || 0) + amt;
+    m.balance = (m.balance || 0) - amt;
+    DB.payments.unshift({ name: m.name, date: today, paid: amt, group: m.group || '', balance: m.balance, method: '' });
+  });
+  logAction('payment', 'bulk', 'Bulk payment ' + _money(amt) + ' from ' + list.length + ' members');
+  saveDB(); reRenderAll();
+  alert('✅ Recorded ' + _money(amt) + ' from ' + list.length + ' member(s).');
+}
+function bulkChangeGroup() {
+  const list = _bulkMembers(); if (!list.length) return;
+  const g = prompt('Set the group for all ' + list.length + ' selected member(s) to:\n\nAvailable: ' + ALL_GROUPS.join(', ') + '\n(Use commas for more than one, e.g. "Sunday, Monday")', '');
+  if (g === null) return;
+  const val = g.trim();
+  if (!val) { alert('No group entered.'); return; }
+  if (!confirm('Set ' + list.length + ' member(s) to group "' + val + '"?')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Bulk group change');
+  list.forEach(m => { m.group = val; });
+  logAction('group', 'bulk', 'Bulk set group "' + val + '" on ' + list.length + ' members');
+  saveDB(); reRenderAll();
+  alert('✅ ' + list.length + ' member(s) moved to "' + val + '".');
+}
+function bulkArchive() {
+  const list = _bulkMembers(); if (!list.length) return;
+  const owing = list.filter(m => (m.balance || 0) !== 0).length;
+  if (!confirm('Archive ' + list.length + ' member(s) to Former Members?' +
+    (owing ? '\n\n' + owing + ' of them still have a balance — it is preserved and comes back if you restore them.' : ''))) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Bulk archive ' + list.length);
+  list.forEach(m => {
+    DB.paused = DB.paused.filter(p => !(p.name === m.name && p.stillPaused));
+    m.active = false;
+    m.endDate = m.endDate || todayStr();
+    delete m.restoredAt;
+    _clearRestoreProtect(m.name);
+    if (!DB.archived.find(a => a.name === m.name)) DB.archived.push({ name: m.name, group: m.group, balance: m.balance, archivedDate: m.endDate });
+  });
+  logAction('archive', 'bulk', 'Bulk archived ' + list.length + ' members');
+  bulkClear(); saveDB(); reRenderAll();
+  alert('✅ Archived ' + list.length + ' member(s).');
+}
+function bulkDelete() {
+  const names = bulkNames(); if (!names.length) return;
+  let totalRecs = 0;
+  names.forEach(n => { const fp = _memberFootprint(n); totalRecs += fp.members.length + fp.archived.length + fp.payments.length + fp.paused.length + fp.monthlyLines.length; });
+  if (!confirm('🗑 Delete ' + names.length + ' member(s) and ALL their data?\n\nThat is about ' + totalRecs + ' record(s) in total.\n\nThey go to the Recycle Bin, so you can put them back.')) return;
+  if (!confirm('Confirm again — delete ' + names.length + ' member(s) and their data?')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Bulk delete ' + names.length + ' members');
+  names.forEach(name => {
+    const fp = _memberFootprint(name);
+    const eq = s => String(s || '').trim().toLowerCase() === fp.key;
+    _trashPush('Deleted "' + name + '" (bulk)', {
+      members: JSON.parse(JSON.stringify(fp.members)), archived: JSON.parse(JSON.stringify(fp.archived)),
+      payments: JSON.parse(JSON.stringify(fp.payments)), paused: JSON.parse(JSON.stringify(fp.paused)),
+      monthlyLines: fp.monthlyLines.map(x => ({ classId: x.rec.id, line: JSON.parse(JSON.stringify(x.ln)), wholeRecord: JSON.parse(JSON.stringify(x.rec)) })),
+      logs: []
+    });
+    DB.members = DB.members.filter(m => !eq(m.name));
+    DB.archived = DB.archived.filter(a => !eq(a.name));
+    DB.payments = DB.payments.filter(p => !eq(p.name));
+    DB.paused = DB.paused.filter(p => !eq(p.name));
+    (DB.classes || []).forEach(c => {
+      if (!c || !Array.isArray(c.lines)) return;
+      const keep = c.lines.filter(ln => !eq(ln.name));
+      if (keep.length !== c.lines.length) {
+        const rem = c.lines.filter(ln => eq(ln.name)).reduce((s, ln) => s + (parseFloat(ln.amt) || 0), 0);
+        c.lines = keep; c.amount = Math.max(0, (c.amount || 0) - rem); c.count = keep.length;
+      }
+    });
+    _clearRestoreProtect(name);
+  });
+  logAction('member', 'bulk', 'Bulk deleted ' + names.length + ' members and their data');
+  bulkClear(); saveDB(); reRenderAll();
+  alert('🗑 Deleted ' + names.length + ' member(s). They are in the Recycle Bin if you need them back.');
+}
+
 function mRowHTML(m) {
   const lp = lastPaymentOf(m.name);
   const tagHTML = _memberTagsHTML(m);
   return '<tr>' +
+    '<td class="edit-only"><input type="checkbox" class="m-sel" data-name="' + esc(m.name) + '" onchange="bulkRefresh()"' + (_bulkSel[m.name] ? ' checked' : '') + '></td>' +
     '<td><div style="display:flex;align-items:center;gap:8px"><a href="#" onclick="openProfile(\'' + escJs(m.name) + '\');return false" style="color:#2d6a9f;font-weight:600;display:inline-flex;align-items:center;gap:8px">' + _avatarHTML(m, 28) + '<span>' + _esc(m.name) + '</span></a>' + (tagHTML ? '<span>' + tagHTML + '</span>' : '') + '</div></td>' +
     '<td style="font-size:0.82rem">' + _esc(m.group || '') + '</td>' +
     '<td>' + balHTML(m.balance) + '</td>' +
@@ -1782,8 +1929,9 @@ function renderMembers() {
   mPage = Math.min(Math.max(mPage || 1, 1), pageCount);
   document.getElementById('m-body').innerHTML = list.length
     ? pg(list, mPage).map(mRowHTML).join('')
-    : '<tr><td colspan="7" class="empty">No members found</td></tr>';
+    : '<tr><td colspan="8" class="empty">No members found</td></tr>';
   renderPag('m-pag', list, mPage, 'setMPage');
+  if (typeof bulkRefresh === 'function') bulkRefresh();
 }
 // Used by the search/filter inputs — a changed filter legitimately resets to page 1.
 function renderMembersFromFilter() { mPage = 1; renderMembers(); }
@@ -1792,6 +1940,7 @@ function setMPage(p) {
   const list = filteredMembers();
   document.getElementById('m-body').innerHTML = pg(list, p).map(mRowHTML).join('');
   renderPag('m-pag', list, p, 'setMPage');
+  if (typeof bulkRefresh === 'function') bulkRefresh();
 }
 function sortM(f) {
   if (mSort.f === f) mSort.asc = !mSort.asc;
@@ -1830,7 +1979,10 @@ function pRowHTML(p) {
     '<td>' + (p.paid !== null ? '<strong>$' + (parseFloat(p.paid) || 0).toFixed(2) + '</strong>' : '<span class="badge b-pau">⚠ Missing</span>') + '</td>' +
     '<td>' + _esc(p.group || '') + '</td>' +
     '<td>' + balHTML(p.balance) + '</td>' +
-    (editMode ? '<td class="edit-only"><button class="btn btn-red btn-sm" onclick="deletePayment(' + ri + ')">✕</button></td>' : '<td class="edit-only"></td>') +
+    (editMode
+      ? '<td class="edit-only" style="white-space:nowrap"><button class="btn btn-orange btn-sm" onclick="openEditPayment(' + ri + ')" title="Edit this payment">✏</button> ' +
+        '<button class="btn btn-red btn-sm" onclick="deletePayment(' + ri + ')" title="Delete this payment">✕</button></td>'
+      : '<td class="edit-only"></td>') +
     '</tr>';
 }
 function renderPayments() {
@@ -1849,6 +2001,60 @@ function setPPage(p) {
   document.getElementById('p-body').innerHTML = pg(list, p).map(pRowHTML).join('');
   renderPag('p-pag', list, p, 'setPPage');
 }
+// Edit an existing payment (amount / date / method / group) and correctly re-apply the
+// difference to the member's totals — previously the only option was delete + re-add.
+function openEditPayment(ri) {
+  const p = DB.payments[ri];
+  if (!p) { alert('Payment not found.'); return; }
+  const cur = parseFloat(p.paid != null ? p.paid : p.amount) || 0;
+  const methods = (DB.settings.paymentMethods || []);
+  document.getElementById('ov-pay-body').innerHTML =
+    '<div class="mh"><h2>✏ Edit Payment — ' + _esc(p.name || '') + '</h2><button class="mclose" onclick="closeOv(\'ov-pay\')">✕</button></div>' +
+    '<p style="font-size:0.85rem;color:#555;background:#eaf3fb;padding:9px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:12px">' +
+    'Changing the amount automatically corrects ' + _esc(p.name || 'this member') + '\'s Total Paid and balance by the difference.</p>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>Amount Paid (' + _curr() + ')</label><input id="ep-amt" type="number" step="0.01" value="' + cur + '"></div>' +
+      '<div class="fg"><label>Date</label><input id="ep-date" type="date" value="' + esc(toISODate(p.date || '')) + '"></div>' +
+      '<div class="fg"><label>Method</label><select id="ep-method"><option value="">—</option>' +
+        methods.map(pm => '<option value="' + esc(pm) + '"' + (p.method === pm ? ' selected' : '') + '>' + esc(pm) + '</option>').join('') +
+      '</select></div>' +
+      '<div class="fg"><label>Group</label><input id="ep-group" type="text" value="' + esc(p.group || '') + '"></div>' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-pay\')">Cancel</button>' +
+      '<button class="btn btn-green" onclick="saveEditPayment(' + ri + ')">💾 Save Changes</button>' +
+    '</div>';
+  openOv('ov-pay');
+}
+function saveEditPayment(ri) {
+  const p = DB.payments[ri];
+  if (!p) { alert('Payment not found.'); return; }
+  const oldAmt = parseFloat(p.paid != null ? p.paid : p.amount) || 0;
+  const newAmt = parseFloat(document.getElementById('ep-amt').value);
+  if (isNaN(newAmt) || newAmt < 0) { alert('Enter a valid amount.'); return; }
+  const newDateRaw = document.getElementById('ep-date').value;
+  const delta = newAmt - oldAmt;
+  if (delta !== 0 && !confirm('Change this payment from ' + _money(oldAmt) + ' to ' + _money(newAmt) + '?\n\n' +
+      (p.name || 'The member') + '\'s Total Paid will change by ' + _money(delta) + ' and their balance by ' + _money(-delta) + '.')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Edit payment for ' + p.name);
+
+  const m = DB.members.find(x => x.name === p.name);
+  if (m && delta !== 0) {
+    m.totalPaid = Math.max(0, (m.totalPaid || 0) + delta);
+    m.balance = (m.balance || 0) - delta;
+  }
+  p.paid = newAmt;
+  if ('amount' in p) p.amount = newAmt;
+  if (newDateRaw) { const d = parseLocalDate(newDateRaw); p.date = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(); }
+  p.method = document.getElementById('ep-method').value || '';
+  p.group = document.getElementById('ep-group').value.trim();
+
+  logAction('payment', 'edit', 'Edited payment for ' + p.name + ': ' + _money(oldAmt) + ' → ' + _money(newAmt));
+  closeOv('ov-pay');
+  saveDB();
+  reRenderAll();
+  alert('✅ Payment updated.');
+}
 function deletePayment(ri) {
   const p = DB.payments[ri];
   if (!p) return;
@@ -1864,10 +2070,13 @@ function deletePayment(ri) {
   if (typeof _pushUndo === 'function') _pushUndo('Delete payment for ' + p.name);
   // Reverse the payment's effect on the member if they exist
   const m = DB.members.find(x => x.name === p.name);
+  const snap = JSON.parse(JSON.stringify(p));
   if (m && amt) {
     m.totalPaid = Math.max(0, (m.totalPaid || 0) - amt);
     m.balance = (m.balance || 0) + amt;
+    snap.__reapply = true;   // restoring should re-apply the totals too
   }
+  _trashPush('Payment ' + _money(amt || 0) + ' — ' + (p.name || '?') + ' (' + (p.date || '') + ')', { payments: [snap] });
   DB.payments.splice(ri, 1);
   logAction('payment', 'delete', 'Deleted payment of ' + _money(amt) + ' from ' + p.name + ' (' + p.date + ')');
   saveDB();
@@ -2809,6 +3018,16 @@ function confirmDeleteMemberParts(name) {
   if (typeof _pushUndo === 'function') _pushUndo('Delete data for ' + name);
   const eq = s => String(s || '').trim().toLowerCase() === fp.key;
 
+  // Snapshot everything we're about to remove into the Recycle Bin so it can be put back.
+  _trashPush('Deleted data for "' + name + '"', {
+    members: want.member ? JSON.parse(JSON.stringify(fp.members)) : [],
+    archived: want.archived ? JSON.parse(JSON.stringify(fp.archived)) : [],
+    payments: want.payments ? JSON.parse(JSON.stringify(fp.payments)) : [],
+    paused: want.paused ? JSON.parse(JSON.stringify(fp.paused)) : [],
+    monthlyLines: want.monthly ? fp.monthlyLines.map(x => ({ classId: x.rec.id, line: JSON.parse(JSON.stringify(x.ln)), wholeRecord: JSON.parse(JSON.stringify(x.rec)) })) : [],
+    logs: want.logs ? JSON.parse(JSON.stringify(fp.logs)) : []
+  });
+
   if (want.member) DB.members = (DB.members || []).filter(m => !eq(m.name));
   if (want.archived) DB.archived = (DB.archived || []).filter(a => !eq(a.name));
   if (want.payments) DB.payments = (DB.payments || []).filter(p => !eq(p.name));
@@ -2839,6 +3058,185 @@ function confirmDeleteMemberParts(name) {
   reRenderAll();
   alert('🗑 Deleted: ' + parts.join(', ') + '.' +
     (_isCloudSyncActive() ? '\n\nThe change will sync to your other devices.' : ''));
+}
+
+/* ============ RECYCLE BIN — nothing is destroyed instantly ============
+   Every delete stores a snapshot here first, so anything removed can be put back.
+   Keeps the newest 50 deletions. */
+const TRASH_MAX = 50;
+function _trashPush(label, payload) {
+  if (!Array.isArray(DB._trash)) DB._trash = [];
+  DB._trash.unshift({
+    id: 'tr_' + Date.now() + '_' + Math.floor(Math.random() * 10000),
+    ts: Date.now(), label: label, payload: payload
+  });
+  if (DB._trash.length > TRASH_MAX) DB._trash.length = TRASH_MAX;
+}
+function _trashCount() { return Array.isArray(DB._trash) ? DB._trash.length : 0; }
+function restoreFromTrash(id) {
+  if (!Array.isArray(DB._trash)) return;
+  const i = DB._trash.findIndex(t => t.id === id);
+  if (i < 0) { alert('That item is no longer in the Recycle Bin.'); return; }
+  const t = DB._trash[i], p = t.payload || {};
+  if (!confirm('Put back: ' + t.label + '?\n\nThis restores the deleted records exactly as they were.')) return;
+
+  const exists = (arr, rec, keyFn) => (arr || []).some(x => keyFn(x) === keyFn(rec));
+  (p.members || []).forEach(m => { if (!exists(DB.members, m, x => (x.name || '').toLowerCase())) DB.members.push(m); });
+  (p.archived || []).forEach(a => { if (!exists(DB.archived, a, x => (x.name || '').toLowerCase())) DB.archived.push(a); });
+  (p.paused || []).forEach(x => DB.paused.push(x));
+  (p.payments || []).forEach(pay => {
+    DB.payments.unshift(pay);
+    // Re-apply the payment's effect if we removed it from a live member.
+    if (pay.__reapply) {
+      const m = DB.members.find(x => x.name === pay.name);
+      const amt = parseFloat(pay.paid != null ? pay.paid : pay.amount) || 0;
+      if (m && amt) { m.totalPaid = (m.totalPaid || 0) + amt; m.balance = (m.balance || 0) - amt; }
+      delete pay.__reapply;
+    }
+  });
+  (p.monthlyLines || []).forEach(ml => {
+    const rec = (DB.classes || []).find(c => c && c.id === ml.classId);
+    if (rec && Array.isArray(rec.lines)) {
+      rec.lines.push(ml.line);
+      rec.amount = (rec.amount || 0) + (parseFloat(ml.line.amt) || 0);
+      rec.count = rec.lines.length;
+    } else if (ml.wholeRecord) {
+      DB.classes.unshift(ml.wholeRecord);
+    }
+  });
+  (p.logs || []).forEach(l => { if (Array.isArray(DB._log)) DB._log.push(l); });
+  if (Array.isArray(DB._log)) DB._log.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+  DB._trash.splice(i, 1);
+  logAction('member', 'restore', 'Restored from Recycle Bin: ' + t.label);
+  saveDB();
+  reRenderAll();
+  closeOv('ov-billing-history');
+  alert('♻ Restored: ' + t.label);
+}
+function purgeTrashItem(id) {
+  if (!Array.isArray(DB._trash)) return;
+  const i = DB._trash.findIndex(t => t.id === id);
+  if (i < 0) return;
+  if (!confirm('Permanently remove "' + DB._trash[i].label + '" from the Recycle Bin?\n\nAfter this it truly cannot be recovered.')) return;
+  DB._trash.splice(i, 1);
+  saveDB();
+  openTrash();
+}
+function emptyTrash() {
+  if (!_trashCount()) { alert('The Recycle Bin is already empty.'); return; }
+  if (!confirm('Empty the Recycle Bin?\n\nAll ' + _trashCount() + ' deleted item(s) will be gone for good.')) return;
+  DB._trash = [];
+  saveDB();
+  openTrash();
+}
+function openTrash() {
+  const items = Array.isArray(DB._trash) ? DB._trash : [];
+  let h = '<div class="mh"><h2>♻ Recycle Bin</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:14px">' +
+       'Anything you delete lands here first, so you can put it back. Holds the last ' + TRASH_MAX + ' deletions.</p>';
+  if (!items.length) {
+    h += '<p style="text-align:center;color:#888;padding:26px">Nothing deleted yet — the bin is empty.</p>';
+  } else {
+    h += '<div class="tw"><table style="margin:0"><thead><tr><th>Deleted item</th><th>What it holds</th><th>When</th><th></th></tr></thead><tbody>';
+    items.forEach(t => {
+      const p = t.payload || {};
+      const bits = [];
+      if ((p.members || []).length) bits.push((p.members).length + ' member');
+      if ((p.archived || []).length) bits.push((p.archived).length + ' former');
+      if ((p.payments || []).length) bits.push((p.payments).length + ' payment');
+      if ((p.monthlyLines || []).length) bits.push((p.monthlyLines).length + ' billing line');
+      if ((p.paused || []).length) bits.push((p.paused).length + ' pause');
+      if ((p.logs || []).length) bits.push((p.logs).length + ' log');
+      h += '<tr>' +
+        '<td><strong>' + _esc(t.label) + '</strong></td>' +
+        '<td style="font-size:0.82rem;color:#555">' + (bits.join(', ') || '—') + '</td>' +
+        '<td style="font-size:0.8rem;color:#888">' + new Date(t.ts).toLocaleString() + '</td>' +
+        '<td style="white-space:nowrap"><button class="btn btn-green btn-sm" onclick="restoreFromTrash(\'' + escJs(t.id) + '\')">♻ Put back</button> ' +
+        '<button class="btn btn-red btn-sm" onclick="purgeTrashItem(\'' + escJs(t.id) + '\')" title="Remove permanently">✕</button></td>' +
+        '</tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '<div class="factions">' +
+    (items.length ? '<button class="btn btn-red" onclick="emptyTrash()">🗑 Empty Bin</button>' : '') +
+    '<button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
+}
+
+/* ============ CHECK & REPAIR TOTALS ============
+   Compares each member's stored "Total Paid" against the sum of their actual payment
+   records and offers to correct the ones that disagree.
+   NOTE: a member's BALANCE cannot be fully recomputed, because individual class charges
+   are not stored per member — only payments are. So this repairs Total Paid (which is
+   verifiable) and reports balance oddities for you to judge. */
+function _auditTotals() {
+  const sums = {};
+  (DB.payments || []).forEach(p => {
+    const k = String(p.name || '').trim().toLowerCase();
+    if (!k) return;
+    sums[k] = (sums[k] || 0) + (parseFloat(p.paid) || 0);
+  });
+  const rows = [];
+  (DB.members || []).forEach(m => {
+    const k = String(m.name || '').trim().toLowerCase();
+    const actual = sums[k] || 0;
+    const stored = parseFloat(m.totalPaid) || 0;
+    const diff = +(stored - actual).toFixed(2);
+    if (Math.abs(diff) >= 0.01) rows.push({ member: m, stored: stored, actual: actual, diff: diff });
+  });
+  return rows;
+}
+function openRepairTotals() {
+  const rows = _auditTotals();
+  const negBal = (DB.members || []).filter(m => (parseFloat(m.balance) || 0) < -0.01);
+  const nanish = (DB.members || []).filter(m => isNaN(parseFloat(m.balance)) || isNaN(parseFloat(m.totalPaid)));
+
+  let h = '<div class="mh"><h2>🩺 Check &amp; Repair Totals</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:14px">' +
+       'This compares each member\'s stored <strong>Total Paid</strong> against the actual payments on record. ' +
+       'It can safely correct any that disagree.<br><small style="color:#777">Balances are not auto-recalculated: individual class charges aren\'t stored per member, so only you can judge those. Anything unusual is listed below.</small></p>';
+
+  if (!rows.length && !negBal.length && !nanish.length) {
+    h += '<p style="text-align:center;color:#2e7d32;padding:26px;font-weight:600">✅ Everything checks out — all Total Paid figures match the payment records.</p>';
+  } else {
+    if (rows.length) {
+      h += '<div style="background:#c0392b;color:#fff;padding:9px 13px;border-radius:8px 8px 0 0;font-weight:700">⚠ ' + rows.length + ' member(s) whose Total Paid does not match their payments</div>';
+      h += '<div class="tw"><table style="margin:0"><thead><tr><th>Member</th><th>Says</th><th>Actually</th><th>Off by</th></tr></thead><tbody>';
+      rows.forEach(r => {
+        h += '<tr><td><strong>' + _esc(r.member.name) + '</strong></td>' +
+          '<td>' + _money(r.stored) + '</td>' +
+          '<td>' + _money(r.actual) + '</td>' +
+          '<td style="color:#c0392b;font-weight:700">' + (r.diff > 0 ? '+' : '') + _money(r.diff) + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+      h += '<div style="margin:10px 0"><button class="btn btn-green" onclick="repairTotalsNow()">🔧 Fix all ' + rows.length + ' Total Paid figure(s)</button></div>';
+    }
+    if (nanish.length) {
+      h += '<div style="background:#fff3cd;border-left:4px solid #f0b400;padding:9px 12px;border-radius:6px;margin-top:10px;font-size:0.85rem;color:#856404">' +
+        '⚠ ' + nanish.length + ' member(s) have a broken number in balance or total paid: ' + _esc(nanish.slice(0, 8).map(m => m.name).join(', ')) + '</div>';
+    }
+    if (negBal.length) {
+      h += '<div style="background:#eaf3fb;border-left:4px solid #2d6a9f;padding:9px 12px;border-radius:6px;margin-top:10px;font-size:0.85rem;color:#31708f">' +
+        'ℹ ' + negBal.length + ' member(s) have a credit (negative balance). Usually fine — they paid ahead: ' + _esc(negBal.slice(0, 8).map(m => m.name).join(', ')) + '</div>';
+    }
+  }
+  h += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
+}
+function repairTotalsNow() {
+  const rows = _auditTotals();
+  if (!rows.length) { alert('Nothing to fix.'); return; }
+  if (!confirm('Correct Total Paid for ' + rows.length + ' member(s) so it matches their actual payment records?\n\nThis only changes the "Total Paid" figure — balances are left alone.')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Repair totals for ' + rows.length + ' members');
+  rows.forEach(r => { r.member.totalPaid = r.actual; });
+  logAction('settings', 'repair', 'Repaired Total Paid for ' + rows.length + ' member(s)');
+  saveDB();
+  reRenderAll();
+  alert('🔧 Fixed ' + rows.length + ' member(s).');
+  openRepairTotals();
 }
 
 /* ============ DATA CLEANUP — "Fix My Numbers" ============
