@@ -654,6 +654,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
     </tr></thead>
     <tbody id="p-body"></tbody>
   </table></div>
+  <div id="p-sum" style="text-align:right;font-size:0.88rem;color:#555;padding:6px 2px"></div>
   <div class="pagination" id="p-pag"></div>
 </div>
 
@@ -1683,7 +1684,15 @@ function initDashboard() {
     '<div class="sc g"><div class="v">' + credit + '</div><div class="l">Have Credit</div></div>' +
     '<div class="sc r"><div class="v">' + _money(totalOwed) + '</div><div class="l">Total Outstanding</div></div>' +
     '<div class="sc"><div class="v">' + _money(rev) + '</div><div class="l">Total Collected</div></div>' +
-    '<div class="sc o"><div class="v">' + paused + '</div><div class="l">Paused (hidden)</div></div>';
+    '<div class="sc o"><div class="v">' + paused + '</div><div class="l">Paused (hidden)</div></div>' +
+    // מעשר reminder tile — only when something is actually owed, so it never nags at $0.
+    (function () {
+      try {
+        if (!DB.finance) return '';
+        const fs = _finSums();
+        return fs.owedLeft > 0.005 ? '<div class="sc r" style="cursor:pointer" onclick="showTab(\'finance\')" title="Open מעשר & Finances"><div class="v">' + _money(fs.owedLeft) + '</div><div class="l">🤲 מעשר to give</div></div>' : '';
+      } catch (e) { return ''; }
+    })();
 
   // Who owes — active only
   const oweList = activeMembers.filter(m => m.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 10);
@@ -2003,6 +2012,12 @@ function renderPayments() {
   document.getElementById('p-body').innerHTML = list.length
     ? pg(list, pPage).map(pRowHTML).join('')
     : '<tr><td colspan="6" class="empty">No payments found</td></tr>';
+  // Live total of whatever is filtered — search a name or pick a date range and see the sum.
+  const sumEl = document.getElementById('p-sum');
+  if (sumEl) {
+    const total = list.reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
+    sumEl.innerHTML = list.length ? list.length + ' payment(s) shown · total <strong>' + _money(total) + '</strong>' : '';
+  }
   renderPag('p-pag', list, pPage, 'setPPage');
 }
 function renderPaymentsFromFilter() { pPage = 1; renderPayments(); }
@@ -2184,7 +2199,9 @@ function renderGroups() {
     const revenue = truly.reduce((s, m) => s + (m.amountPerClass || dpc), 0);
     return '<div class="gcard">' +
       '<div onclick="openGroupDetail(\'' + escJs(gName) + '\')" style="cursor:pointer">' +
-        '<h3>' + esc(gName) + ' Group <span style="font-size:0.72rem;color:#888;font-weight:400">→ click to open</span></h3>' +
+        '<h3>' + esc(gName) + ' Group ' +
+          (_hasActiveMonthlyBill(gName) ? '<span style="font-size:0.68rem;background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-weight:700;vertical-align:middle" title="This group was already billed with Charge-for-Month this month">✓ billed this month</span> ' : '') +
+          '<span style="font-size:0.72rem;color:#888;font-weight:400">→ click to open</span></h3>' +
         '<div class="gstat-row">' +
           '<div class="gst"><strong>' + truly.length + '</strong><span>Active</span></div>' +
           '<div class="gst"><strong>' + _money(revenue) + '</strong><span>/class</span></div>' +
@@ -3112,7 +3129,7 @@ function _finMonth(key) {
     const ymd = _dateToYMD(e.date);
     if (!ymd || ymd.slice(0, 7) !== key) return;
     const a = parseFloat(e.amount) || 0;
-    if (e.type === 'income') inc += a; else if (e.type === 'expense') exp += a; else giv += a;
+    if (e.type === 'income') inc += a; else if (e.type === 'expense') exp += a; else if (e.type === 'maaser') giv += a;
   });
   return { inc, exp, giv };
 }
@@ -3162,19 +3179,23 @@ function _finClassIncome() {
 }
 function _finSums() {
   _ensureFinance();
-  let otherIncome = 0, expenses = 0, maaserGiven = 0;
+  let otherIncome = 0, expenses = 0, maaserGiven = 0, deposits = 0, withdrawals = 0;
   DB.finance.entries.forEach(e => {
     const a = parseFloat(e.amount) || 0;
     if (e.type === 'income') otherIncome += a;
     else if (e.type === 'expense') expenses += a;
     else if (e.type === 'maaser') maaserGiven += a;
+    else if (e.type === 'deposit') deposits += a;       // money in that is NOT income (savings, already-tithed gift) — no מעשר on it
+    else if (e.type === 'withdrawal') withdrawals += a; // money out that is NOT an expense (moved to savings)
   });
   const classIncome = _finClassIncome();
   const gross = classIncome + otherIncome;
   const c = DB.finance.cfg;
   const base = c.base === 'net' ? Math.max(0, gross - expenses) : gross;
   const owedTotal = base * (c.maaserRate / 100);
-  return { classIncome, otherIncome, expenses, maaserGiven, gross, base, owedTotal, owedLeft: owedTotal - maaserGiven };
+  // Cash on hand = everything that came in minus everything that went out.
+  const cash = gross + deposits - expenses - maaserGiven - withdrawals;
+  return { classIncome, otherIncome, expenses, maaserGiven, deposits, withdrawals, cash, gross, base, owedTotal, owedLeft: owedTotal - maaserGiven };
 }
 const _FIN_CATS = ['Classes', 'Other job', 'Babysitting', 'Gifts', 'Rent', 'Utilities', 'Groceries', 'Tuition', 'Medical', 'Car', 'Tzedaka', 'Other'];
 let _finFilter = { month: '', type: '', cat: '', q: '' };
@@ -3213,6 +3234,7 @@ function renderFinance() {
   let h = '';
   // ---- headline cards ----
   h += '<div class="sc-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+    '<div class="sc ' + (s.cash >= 0 ? '' : 'r') + '"><div class="v">' + _money(s.cash) + '</div><div class="l">💵 Cash on hand</div></div>' +
     '<div class="sc g"><div class="v">' + _money(s.gross) + '</div><div class="l">All income' + (c.includeClasses ? ' (incl. classes)' : '') + '</div></div>' +
     '<div class="sc o"><div class="v">' + _money(s.expenses) + '</div><div class="l">Expenses</div></div>' +
     '<div class="sc"><div class="v">' + _money(s.owedTotal) + '</div><div class="l">מעשר owed (' + c.maaserRate + '% of ' + (c.base === 'net' ? 'net' : 'gross') + ')</div></div>' +
@@ -3349,7 +3371,8 @@ function renderFinance() {
     DB.finance.entries.forEach(e => {
       const cat = (e.category || 'Uncategorized');
       if (!byCat[cat]) byCat[cat] = { income: 0, expense: 0, maaser: 0 };
-      byCat[cat][e.type === 'income' ? 'income' : (e.type === 'expense' ? 'expense' : 'maaser')] += parseFloat(e.amount) || 0;
+      if (e.type !== 'income' && e.type !== 'expense' && e.type !== 'maaser') return; // deposits/withdrawals aren't income or spending
+      byCat[cat][e.type] += parseFloat(e.amount) || 0;
     });
     const cats = Object.keys(byCat).sort();
     if (cats.length) {
@@ -3369,6 +3392,8 @@ function renderFinance() {
           '<option value="income">💰 Other income (not classes)</option>' +
           '<option value="expense">🧾 Expense</option>' +
           '<option value="maaser">🤲 מעשר given</option>' +
+          '<option value="deposit">💵 Put money in — NOT income (from savings, already-tithed gift)</option>' +
+          '<option value="withdrawal">🏧 Take money out — NOT an expense (moved to savings)</option>' +
         '</select></div>' +
         '<div class="fg"><label>Amount (' + _curr() + ') *</label><input id="fin-amt" type="number" step="0.01" placeholder="0"></div>' +
         '<div class="fg"><label>Date</label><input id="fin-date" type="date" value="' + localISODate() + '"></div>' +
@@ -3419,7 +3444,9 @@ function renderFinance() {
     '<select id="ff-type" onchange="finSetFilter()"><option value="">All types</option>' +
       '<option value="income"' + (_finFilter.type === 'income' ? ' selected' : '') + '>💰 Income</option>' +
       '<option value="expense"' + (_finFilter.type === 'expense' ? ' selected' : '') + '>🧾 Expense</option>' +
-      '<option value="maaser"' + (_finFilter.type === 'maaser' ? ' selected' : '') + '>🤲 מעשר</option></select>' +
+      '<option value="maaser"' + (_finFilter.type === 'maaser' ? ' selected' : '') + '>🤲 מעשר</option>' +
+      '<option value="deposit"' + (_finFilter.type === 'deposit' ? ' selected' : '') + '>💵 Money in</option>' +
+      '<option value="withdrawal"' + (_finFilter.type === 'withdrawal' ? ' selected' : '') + '>🏧 Money out</option></select>' +
     '<select id="ff-cat" onchange="finSetFilter()"><option value="">All categories</option>' + catsSeen.map(c => '<option value="' + esc(c) + '"' + (_finFilter.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>' +
   '</div>';
   const entries = allEntries.filter(e => {
@@ -3439,7 +3466,7 @@ function renderFinance() {
   } else {
     entries.forEach(e => {
       const idx = DB.finance.entries.indexOf(e);
-      const tl = e.type === 'income' ? '💰 Income' : (e.type === 'expense' ? '🧾 Expense' : '🤲 מעשר');
+      const tl = { income: '💰 Income', expense: '🧾 Expense', maaser: '🤲 מעשר', deposit: '💵 Money in', withdrawal: '🏧 Money out' }[e.type] || e.type;
       h += '<tr><td>' + _esc(e.date || '') + '</td><td>' + tl + '</td>' +
         '<td><strong>' + _money(parseFloat(e.amount) || 0) + '</strong></td>' +
         '<td style="font-size:0.82rem">' + _esc(e.category || '—') + '</td>' +
@@ -3475,7 +3502,9 @@ function finEditEntry(idx) {
       '<div class="fg"><label>Type</label><select id="fe-type">' +
         '<option value="income"' + (e.type === 'income' ? ' selected' : '') + '>💰 Income</option>' +
         '<option value="expense"' + (e.type === 'expense' ? ' selected' : '') + '>🧾 Expense</option>' +
-        '<option value="maaser"' + (e.type === 'maaser' ? ' selected' : '') + '>🤲 מעשר given</option></select></div>' +
+        '<option value="maaser"' + (e.type === 'maaser' ? ' selected' : '') + '>🤲 מעשר given</option>' +
+        '<option value="deposit"' + (e.type === 'deposit' ? ' selected' : '') + '>💵 Money in (not income)</option>' +
+        '<option value="withdrawal"' + (e.type === 'withdrawal' ? ' selected' : '') + '>🏧 Money out (not an expense)</option></select></div>' +
       '<div class="fg"><label>Amount (' + _curr() + ')</label><input id="fe-amt" type="number" step="0.01" value="' + (parseFloat(e.amount) || 0) + '"></div>' +
       '<div class="fg"><label>Date</label><input id="fe-date" type="date" value="' + esc(toISODate(e.date || '')) + '"></div>' +
       '<div class="fg"><label>Category</label><input id="fe-cat" type="text" list="fin-cat-list" value="' + esc(e.category || '') + '"></div>' +
@@ -3738,7 +3767,7 @@ function openFinanceYearReport(year) {
       const ymd = _dateToYMD(e.date);
       if (!ymd || ymd.slice(0, 7) !== key) return;
       const a = parseFloat(e.amount) || 0;
-      if (e.type === 'income') inc += a; else if (e.type === 'expense') exp += a; else giv += a;
+      if (e.type === 'income') inc += a; else if (e.type === 'expense') exp += a; else if (e.type === 'maaser') giv += a;
     });
     const gross = cls + inc;
     const base = c.base === 'net' ? Math.max(0, gross - exp) : gross;
