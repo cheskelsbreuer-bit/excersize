@@ -517,6 +517,8 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
         <button class="menu-item" onclick="openBugReport();toggleMenu()">📨 Send Feedback</button>
         <button class="menu-item" onclick="showTab('settings');toggleMenu()">⚙ Open Settings</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
+        <button class="menu-item" onclick="openDataCleanup();toggleMenu()">🧹 Fix My Numbers (Cleanup)</button>
+        <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
       </div>
     </div>
@@ -2737,60 +2739,185 @@ function _memberFootprint(name) {
     logs: (DB._log || []).filter(e => e && typeof e.details === 'string' && e.details.toLowerCase().includes(key))
   };
 }
-// Permanently delete a member and EVERY trace of them. This is different from Archive
-// (which only moves them to Former Members and keeps all their data). Irreversible except
-// via the automatic backup this offers first.
+// Selective delete: opens a picker so you choose EXACTLY what to remove for this person —
+// just their payments, just the member record, just the billing lines, or everything.
+// Nothing is deleted until you confirm your selection.
 function deleteMemberPermanently(name) {
   const fp = _memberFootprint(name);
   const total = fp.members.length + fp.archived.length + fp.payments.length + fp.paused.length + fp.monthlyLines.length + fp.logs.length;
   if (!total) { alert('Nothing found for "' + name + '" — there is no data left to delete.'); return; }
   const paidSum = fp.payments.reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
+  const monthlySum = fp.monthlyLines.reduce((s, x) => s + (parseFloat(x.ln.amt) || 0), 0);
   const bal = fp.members.length ? (fp.members[0].balance || 0) : (fp.archived.length ? (fp.archived[0].balance || 0) : 0);
 
-  if (!confirm(
-    '🗑 PERMANENTLY DELETE "' + name + '" and ALL their data?\n\n' +
-    'This will erase:\n' +
-    '• ' + fp.members.length + ' member record(s)' + (bal ? '  (balance ' + _money(bal) + ')' : '') + '\n' +
-    '• ' + fp.archived.length + ' Former-Members entry(ies)\n' +
-    '• ' + fp.payments.length + ' payment record(s)' + (paidSum ? '  (' + _money(paidSum) + ' total)' : '') + '\n' +
-    '• ' + fp.paused.length + ' pause record(s)\n' +
-    '• ' + fp.monthlyLines.length + ' monthly-billing line(s)\n' +
-    '• ' + fp.logs.length + ' activity-log entry(ies)\n\n' +
-    'This CANNOT be undone. Continue?'
-  )) return;
-  if (!confirm('Last check — really delete "' + name + '" and all ' + total + ' record(s) forever?')) return;
+  function row(id, label, count, extra, disabled) {
+    if (!count) return '<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid #eef;opacity:0.45">' +
+      '<input type="checkbox" disabled> <span style="flex:1">' + label + '</span><span style="color:#999;font-size:0.82rem">none</span></label>';
+    return '<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid #eef;cursor:pointer">' +
+      '<input type="checkbox" class="delpart" id="' + id + '" checked' + (disabled ? ' disabled' : '') + '>' +
+      '<span style="flex:1">' + label + '</span>' +
+      '<span style="font-weight:700">' + count + (extra ? ' <span style="color:#c0392b">(' + extra + ')</span>' : '') + '</span></label>';
+  }
 
-  if (typeof _pushUndo === 'function') _pushUndo('Delete member ' + name);
+  document.getElementById('ov-charge-body').innerHTML =
+    '<div class="mh"><h2>🗑 Delete data for "' + _esc(name) + '"</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<p style="color:#555;font-size:0.88rem;background:#fdecea;padding:10px;border-radius:6px;border-left:4px solid #c0392b;margin-bottom:12px">' +
+    'Tick only what you want to remove. Everything you leave unticked is kept exactly as it is. This cannot be undone.</p>' +
+    '<div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-bottom:10px">' +
+      row('del-member', '👤 Member record' + (bal ? ' — balance ' + _money(bal) : ''), fp.members.length) +
+      row('del-archived', '🗃 Former Members entry', fp.archived.length) +
+      row('del-payments', '💰 Payment records', fp.payments.length, paidSum ? _money(paidSum) : '') +
+      row('del-monthly', '📅 Monthly billing lines', fp.monthlyLines.length, monthlySum ? _money(monthlySum) : '') +
+      row('del-paused', '⏸ Pause records', fp.paused.length) +
+      row('del-logs', '📜 Activity log entries', fp.logs.length) +
+    '</div>' +
+    '<div style="display:flex;gap:6px;margin-bottom:10px">' +
+      '<button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.delpart\').forEach(c=>{if(!c.disabled)c.checked=true})">Select All</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="document.querySelectorAll(\'.delpart\').forEach(c=>c.checked=false)">Select None</button>' +
+    '</div>' +
+    '<p style="font-size:0.8rem;color:#856404;background:#fff8e1;padding:8px 10px;border-radius:6px">' +
+    '💡 Tip: to fix wrong totals but keep the person, tick only <strong>Payment records</strong> and <strong>Monthly billing lines</strong>.</p>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
+      '<button class="btn btn-red" onclick="confirmDeleteMemberParts(\'' + escJs(name) + '\')">🗑 Delete Ticked Items</button>' +
+    '</div>';
+  openOv('ov-charge');
+}
+// Executes only the parts the user ticked in the delete picker.
+function confirmDeleteMemberParts(name) {
+  const on = id => { const el = document.getElementById(id); return !!(el && el.checked && !el.disabled); };
+  const want = {
+    member: on('del-member'), archived: on('del-archived'), payments: on('del-payments'),
+    monthly: on('del-monthly'), paused: on('del-paused'), logs: on('del-logs')
+  };
+  if (!Object.keys(want).some(k => want[k])) { alert('Nothing ticked — nothing to delete.'); return; }
+
+  const fp = _memberFootprint(name);
+  const parts = [];
+  if (want.member) parts.push(fp.members.length + ' member record(s)');
+  if (want.archived) parts.push(fp.archived.length + ' Former-Members entry(ies)');
+  if (want.payments) parts.push(fp.payments.length + ' payment(s)');
+  if (want.monthly) parts.push(fp.monthlyLines.length + ' monthly billing line(s)');
+  if (want.paused) parts.push(fp.paused.length + ' pause record(s)');
+  if (want.logs) parts.push(fp.logs.length + ' log entry(ies)');
+  // Warn if this would leave money behind with no member attached (creates a ghost).
+  const orphanWarn = (want.member && want.archived && !want.payments && fp.payments.length)
+    ? '\n\n⚠ Heads-up: you are removing the person but KEEPING their ' + fp.payments.length + ' payment(s), so that money will still count in your totals as a ghost record.'
+    : '';
+  if (!confirm('Delete the following for "' + name + '"?\n\n• ' + parts.join('\n• ') + orphanWarn + '\n\nThis cannot be undone.')) return;
+
+  if (typeof _pushUndo === 'function') _pushUndo('Delete data for ' + name);
   const eq = s => String(s || '').trim().toLowerCase() === fp.key;
 
-  DB.members = (DB.members || []).filter(m => !eq(m.name));
-  DB.archived = (DB.archived || []).filter(a => !eq(a.name));
-  DB.payments = (DB.payments || []).filter(p => !eq(p.name));
-  DB.paused = (DB.paused || []).filter(p => !eq(p.name));
-  // Strip their lines out of monthly billing records and correct that record's totals.
-  (DB.classes || []).forEach(c => {
-    if (!c || !Array.isArray(c.lines)) return;
-    const keep = c.lines.filter(ln => !eq(ln.name));
-    if (keep.length !== c.lines.length) {
-      const removedAmt = c.lines.filter(ln => eq(ln.name)).reduce((s, ln) => s + (parseFloat(ln.amt) || 0), 0);
-      c.lines = keep;
-      c.amount = Math.max(0, (c.amount || 0) - removedAmt);
-      c.count = keep.length;
-    }
-  });
-  // Drop empty monthly records left behind.
-  DB.classes = (DB.classes || []).filter(c => !(c && c.monthly && Array.isArray(c.lines) && c.lines.length === 0));
-  if (Array.isArray(DB._log)) DB._log = DB._log.filter(e => !(e && typeof e.details === 'string' && e.details.toLowerCase().includes(fp.key)));
-  _clearRestoreProtect(name);
+  if (want.member) DB.members = (DB.members || []).filter(m => !eq(m.name));
+  if (want.archived) DB.archived = (DB.archived || []).filter(a => !eq(a.name));
+  if (want.payments) DB.payments = (DB.payments || []).filter(p => !eq(p.name));
+  if (want.paused) DB.paused = (DB.paused || []).filter(p => !eq(p.name));
+  if (want.monthly) {
+    // Strip their lines out of monthly billing records and correct that record's totals.
+    (DB.classes || []).forEach(c => {
+      if (!c || !Array.isArray(c.lines)) return;
+      const keep = c.lines.filter(ln => !eq(ln.name));
+      if (keep.length !== c.lines.length) {
+        const removedAmt = c.lines.filter(ln => eq(ln.name)).reduce((s, ln) => s + (parseFloat(ln.amt) || 0), 0);
+        c.lines = keep;
+        c.amount = Math.max(0, (c.amount || 0) - removedAmt);
+        c.count = keep.length;
+      }
+    });
+    DB.classes = (DB.classes || []).filter(c => !(c && c.monthly && Array.isArray(c.lines) && c.lines.length === 0));
+  }
+  if (want.logs && Array.isArray(DB._log)) DB._log = DB._log.filter(e => !(e && typeof e.details === 'string' && e.details.toLowerCase().includes(fp.key)));
+  if (want.member && want.archived) _clearRestoreProtect(name);
 
-  // Deliberately does NOT include the name — the whole point is to leave no trace of it.
-  logAction('member', 'delete', 'Permanently deleted a member and all their data (' + total + ' record(s))');
+  // Deliberately omits the name so a full delete leaves no trace of it.
+  logAction('member', 'delete', 'Deleted member data (' + parts.join(', ') + ')');
+  closeOv('ov-charge');
   closeOv('ov-edit');
   closeOv('ov-profile');
   saveDB();
   reRenderAll();
-  alert('🗑 "' + name + '" and all ' + total + ' record(s) permanently deleted.' +
+  alert('🗑 Deleted: ' + parts.join(', ') + '.' +
     (_isCloudSyncActive() ? '\n\nThe change will sync to your other devices.' : ''));
+}
+
+/* ============ DATA CLEANUP — "Fix My Numbers" ============
+   Finds leftover data from members who were deleted/renamed, plus anything that looks
+   like test data (huge amounts). This is how you remove a ghost member's money when the
+   member themselves is no longer listed anywhere. */
+function _scanAllNames() {
+  const map = {};                       // lowercased name -> summary
+  const norm = s => String(s || '').trim();
+  const key = s => norm(s).toLowerCase();
+  function bucket(name) {
+    const k = key(name);
+    if (!k) return null;
+    if (!map[k]) map[k] = { name: norm(name), isMember: false, isArchived: false, balance: 0, payCount: 0, paySum: 0, monthlyCount: 0, monthlySum: 0, pauseCount: 0 };
+    return map[k];
+  }
+  (DB.members || []).forEach(m => { const b = bucket(m.name); if (b) { b.isMember = true; b.balance = parseFloat(m.balance) || 0; b.name = norm(m.name); } });
+  (DB.archived || []).forEach(a => { const b = bucket(a.name); if (b) { b.isArchived = true; if (!b.isMember) b.balance = parseFloat(a.balance) || 0; } });
+  (DB.payments || []).forEach(p => { const b = bucket(p.name); if (b) { b.payCount++; b.paySum += parseFloat(p.paid) || 0; } });
+  (DB.paused || []).forEach(p => { const b = bucket(p.name); if (b) b.pauseCount++; });
+  (DB.classes || []).forEach(c => {
+    if (c && Array.isArray(c.lines)) c.lines.forEach(ln => { const b = bucket(ln.name); if (b) { b.monthlyCount++; b.monthlySum += parseFloat(ln.amt) || 0; } });
+  });
+  return Object.keys(map).map(k => map[k]);
+}
+function openDataCleanup() {
+  const all = _scanAllNames();
+  // A "ghost" = data exists under this name but the person is not a member and not in
+  // Former Members. That is leftover data from someone deleted or renamed.
+  const ghosts = all.filter(r => !r.isMember && !r.isArchived);
+  // Flag suspiciously large figures — typical of test data.
+  const BIG = 10000;
+  const big = all.filter(r => (Math.abs(r.paySum) >= BIG || Math.abs(r.balance) >= BIG || Math.abs(r.monthlySum) >= BIG));
+  const totalCollected = (DB.payments || []).reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
+  const ghostMoney = ghosts.reduce((s, r) => s + r.paySum, 0);
+  const bigMoney = big.reduce((s, r) => s + r.paySum, 0);
+
+  let h = '<div class="mh"><h2>🧹 Fix My Numbers</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:14px">' +
+       'If your totals look wrong, it is usually leftover data from a member who was deleted or renamed — the person is gone but their money is still counted. ' +
+       'Anything listed below can be removed safely; real members are not affected.</p>';
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+       '<div class="sc"><div class="v">' + _money(totalCollected) + '</div><div class="l">Total Collected now</div></div>' +
+       '<div class="sc r"><div class="v">' + ghosts.length + '</div><div class="l">Ghost records</div></div>' +
+       '<div class="sc o"><div class="v">' + big.length + '</div><div class="l">Suspiciously large</div></div>' +
+       '</div>';
+
+  function table(title, rows, note, danger) {
+    if (!rows.length) return '';
+    let t = '<div style="margin-bottom:18px">';
+    t += '<div style="background:' + (danger ? '#c0392b' : '#1a3a5c') + ';color:#fff;padding:9px 13px;border-radius:8px 8px 0 0;font-weight:700">' + title + '</div>';
+    if (note) t += '<div style="background:#fff8e1;padding:8px 12px;font-size:0.82rem;color:#856404">' + note + '</div>';
+    t += '<div class="tw"><table style="margin:0"><thead><tr><th>Name</th><th>Status</th><th>Payments</th><th>Money counted</th><th>Balance</th><th></th></tr></thead><tbody>';
+    rows.sort((a, b) => Math.abs(b.paySum) - Math.abs(a.paySum)).forEach(r => {
+      const status = r.isMember ? 'Active member' : (r.isArchived ? 'Former member' : '<strong style="color:#c0392b">GHOST — not a member</strong>');
+      t += '<tr>' +
+        '<td><strong>' + _esc(r.name) + '</strong></td>' +
+        '<td style="font-size:0.82rem">' + status + '</td>' +
+        '<td>' + r.payCount + '</td>' +
+        '<td><strong>' + _money(r.paySum) + '</strong></td>' +
+        '<td>' + balHTML(r.balance) + '</td>' +
+        '<td><button class="btn btn-red btn-sm" onclick="deleteMemberPermanently(\'' + escJs(r.name) + '\')">🗑 Remove all their data</button></td>' +
+        '</tr>';
+    });
+    t += '</tbody></table></div></div>';
+    return t;
+  }
+
+  if (!ghosts.length && !big.length) {
+    h += '<p style="text-align:center;color:#2e7d32;padding:24px;font-weight:600">✅ Nothing suspicious found — no ghost records and no unusually large amounts.</p>';
+  } else {
+    h += table('👻 Ghost records — ' + _money(ghostMoney) + ' counted from people who are not members', ghosts,
+      'These names still have payments or charges in your data, but the person is not in Members or Former Members. This is almost always a deleted test member. Removing them fixes your totals.', true);
+    h += table('⚠ Unusually large amounts (over ' + _money(BIG) + ')', big.filter(r => !ghosts.includes(r)),
+      'These are real members with very large figures. Check them before removing — only remove if it is test data.', false);
+  }
+  h += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
 }
 
 // v32: Device-local restore protection — survives sync overwrites.
