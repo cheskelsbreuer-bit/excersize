@@ -3082,12 +3082,35 @@ function confirmDeleteMemberParts(name) {
 function _ensureFinance() {
   if (!DB.finance) DB.finance = {};
   if (!Array.isArray(DB.finance.entries)) DB.finance.entries = [];
+  if (!Array.isArray(DB.finance.recurring)) DB.finance.recurring = [];
   if (!DB.finance.cfg) DB.finance.cfg = {};
   const c = DB.finance.cfg;
   if (typeof c.maaserRate !== 'number') c.maaserRate = 10;
   if (c.base !== 'net' && c.base !== 'gross') c.base = 'gross';
   if (typeof c.includeClasses !== 'boolean') c.includeClasses = true;
   if (typeof c.classesFrom !== 'string') c.classesFrom = '';
+  // Start the ledger from TODAY with $0 owed — old class payments don't retroactively
+  // create a מעשר debt. (User can clear the date in settings to count all history.)
+  if (!c._startInit) { if (!c.classesFrom) c.classesFrom = localISODate(); c._startInit = true; }
+}
+// Auto-post recurring monthly items (rent, salary, etc.) once per month on/after their day.
+function _runFinanceRecurring() {
+  _ensureFinance();
+  const today = new Date();
+  const nowYM = _monthKey(today);
+  let posted = 0;
+  DB.finance.recurring.forEach(r => {
+    const amt = parseFloat(r.amount); if (isNaN(amt) || amt <= 0) return;
+    const day = Math.min(28, Math.max(1, parseInt(r.day) || 1));
+    if (today.getDate() < day) return;               // not due yet this month
+    if ((r.lastYM || '') >= nowYM) return;           // already posted this month
+    const date = (today.getMonth() + 1) + '/' + day + '/' + today.getFullYear();
+    DB.finance.entries.unshift({ id: 'fin_' + Date.now() + '_' + posted, type: r.type, amount: amt, date, note: (r.note || '') + ' (recurring)', category: r.category || '' });
+    r.lastYM = nowYM;
+    posted++;
+  });
+  if (posted) { logAction('settings', 'finance', 'Auto-posted ' + posted + ' recurring finance item(s)'); saveDB(); }
+  return posted;
 }
 function _finClassIncome() {
   _ensureFinance();
@@ -3121,8 +3144,10 @@ function _finSums() {
   const owedTotal = base * (c.maaserRate / 100);
   return { classIncome, otherIncome, expenses, maaserGiven, gross, base, owedTotal, owedLeft: owedTotal - maaserGiven };
 }
+const _FIN_CATS = ['Classes', 'Other job', 'Babysitting', 'Gifts', 'Rent', 'Utilities', 'Groceries', 'Tuition', 'Medical', 'Car', 'Tzedaka', 'Other'];
 function renderFinance() {
   _ensureFinance();
+  _runFinanceRecurring();
   const s = _finSums();
   const c = DB.finance.cfg;
   const el = document.getElementById('finance-content');
@@ -3150,10 +3175,16 @@ function renderFinance() {
         '</select></div>' +
         '<div class="fg"><label>Amount (' + _curr() + ') *</label><input id="fin-amt" type="number" step="0.01" placeholder="0"></div>' +
         '<div class="fg"><label>Date</label><input id="fin-date" type="date" value="' + localISODate() + '"></div>' +
+        '<div class="fg"><label>Category</label><input id="fin-cat" type="text" list="fin-cat-list" placeholder="e.g. Other job / Rent"><datalist id="fin-cat-list">' + _FIN_CATS.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist></div>' +
         '<div class="fg"><label>Note</label><input id="fin-note" type="text" placeholder="e.g. babysitting / rent / to Tomchei Shabbos"></div>' +
       '</div>' +
-      '<div style="margin-top:8px"><button class="btn btn-green" onclick="finAddEntry()">➕ Add</button></div>' +
+      '<div style="margin-top:8px"><button class="btn btn-green" onclick="finAddEntry()">➕ Add</button> ' +
+      '<button class="btn btn-blue" onclick="openFinRecurring()">🔁 Monthly auto-entries</button> ' +
+      '<button class="btn btn-gray" onclick="openFinanceYearReport()">📆 Yearly report</button> ' +
+      '<button class="btn btn-gray" onclick="exportFinanceCSV()">📊 Export CSV</button></div>' +
     '</div>';
+  } else {
+    h += '<div style="margin-bottom:14px"><button class="btn btn-gray" onclick="openFinanceYearReport()">📆 Yearly report</button></div>';
   }
 
   // ---- settings ----
@@ -3180,15 +3211,16 @@ function renderFinance() {
 
   // ---- entries table ----
   const entries = DB.finance.entries.slice().sort((a, b) => (_dateToYMD(b.date) || '').localeCompare(_dateToYMD(a.date) || ''));
-  h += '<div class="tw"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Note</th>' + (editMode ? '<th></th>' : '') + '</tr></thead><tbody>';
+  h += '<div class="tw"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Category</th><th>Note</th>' + (editMode ? '<th></th>' : '') + '</tr></thead><tbody>';
   if (!entries.length) {
-    h += '<tr><td colspan="5" class="empty">No entries yet. Class income still counts automatically (' + _money(s.classIncome) + ' so far).</td></tr>';
+    h += '<tr><td colspan="6" class="empty">No entries yet. Class income still counts automatically (' + _money(s.classIncome) + ' so far).</td></tr>';
   } else {
     entries.forEach(e => {
       const idx = DB.finance.entries.indexOf(e);
       const tl = e.type === 'income' ? '💰 Income' : (e.type === 'expense' ? '🧾 Expense' : '🤲 מעשר');
       h += '<tr><td>' + _esc(e.date || '') + '</td><td>' + tl + '</td>' +
         '<td><strong>' + _money(parseFloat(e.amount) || 0) + '</strong></td>' +
+        '<td style="font-size:0.82rem">' + _esc(e.category || '—') + '</td>' +
         '<td>' + _esc(e.note || '') + '</td>' +
         (editMode ? '<td><button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')">✕</button></td>' : '') +
         '</tr>';
@@ -3205,7 +3237,8 @@ function finAddEntry() {
   const d = parseLocalDate(document.getElementById('fin-date').value || localISODate());
   const date = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   const note = document.getElementById('fin-note').value.trim();
-  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type, amount: amt, date, note });
+  const cat = (document.getElementById('fin-cat') ? document.getElementById('fin-cat').value.trim() : '');
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type, amount: amt, date, note, category: cat });
   logAction('settings', 'finance', (type === 'maaser' ? 'מעשר given ' : type + ' ') + _money(amt) + (note ? ' — ' + note : ''));
   saveDB();
   renderFinance();
@@ -3236,6 +3269,133 @@ function finSetCfg() {
   c.classesFrom = document.getElementById('fin-classesfrom').value || '';
   saveDB();
   renderFinance();
+}
+
+/* ---- Recurring monthly finance items (rent, salary, tuition...) ---- */
+function openFinRecurring() {
+  _ensureFinance();
+  const list = DB.finance.recurring;
+  let h = '<div class="mh"><h2>🔁 Monthly auto-entries</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:12px">' +
+       'Things that happen every month — a salary, rent, tuition — get entered automatically on the day you pick. No more typing them each month.</p>';
+  h += '<div class="fgrid" style="background:#fff;border:1px solid #dde;border-radius:8px;padding:12px;margin-bottom:12px">' +
+    '<div class="fg"><label>Type</label><select id="fr-type"><option value="income">💰 Income</option><option value="expense">🧾 Expense</option></select></div>' +
+    '<div class="fg"><label>Amount (' + _curr() + ')</label><input id="fr-amt" type="number" step="0.01"></div>' +
+    '<div class="fg"><label>Day of month (1–28)</label><input id="fr-day" type="number" min="1" max="28" value="1"></div>' +
+    '<div class="fg"><label>Category</label><input id="fr-cat" type="text" list="fin-cat-list" placeholder="e.g. Rent"></div>' +
+    '<div class="fg" style="grid-column:1/-1"><label>Note</label><input id="fr-note" type="text" placeholder="e.g. Apartment rent"></div>' +
+  '</div>';
+  h += '<div style="margin-bottom:12px"><button class="btn btn-green" onclick="finAddRecurring()">➕ Add monthly item</button></div>';
+  if (list.length) {
+    h += '<div class="tw"><table style="margin:0"><thead><tr><th>Type</th><th>Amount</th><th>Day</th><th>Note</th><th></th></tr></thead><tbody>';
+    list.forEach((r, i) => {
+      h += '<tr><td>' + (r.type === 'income' ? '💰 Income' : '🧾 Expense') + '</td>' +
+        '<td><strong>' + _money(parseFloat(r.amount) || 0) + '</strong></td>' +
+        '<td>' + (r.day || 1) + '</td>' +
+        '<td>' + _esc((r.note || '') + (r.category ? ' [' + r.category + ']' : '')) + '</td>' +
+        '<td><button class="btn btn-red btn-sm" onclick="finDeleteRecurring(' + i + ')">✕</button></td></tr>';
+    });
+    h += '</tbody></table></div>';
+  } else {
+    h += '<p style="text-align:center;color:#888;padding:14px">No monthly items yet.</p>';
+  }
+  h += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
+}
+function finAddRecurring() {
+  _ensureFinance();
+  const amt = parseFloat(document.getElementById('fr-amt').value);
+  if (isNaN(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
+  DB.finance.recurring.push({
+    id: 'fr_' + Date.now(),
+    type: document.getElementById('fr-type').value === 'expense' ? 'expense' : 'income',
+    amount: amt,
+    day: Math.min(28, Math.max(1, parseInt(document.getElementById('fr-day').value) || 1)),
+    category: document.getElementById('fr-cat').value.trim(),
+    note: document.getElementById('fr-note').value.trim(),
+    lastYM: ''
+  });
+  saveDB();
+  _runFinanceRecurring();   // post immediately if already due this month
+  openFinRecurring();
+  renderFinance();
+}
+function finDeleteRecurring(i) {
+  _ensureFinance();
+  const r = DB.finance.recurring[i];
+  if (!r) return;
+  if (!confirm('Stop the monthly ' + r.type + ' of ' + _money(parseFloat(r.amount) || 0) + (r.note ? ' (' + r.note + ')' : '') + '?\n\nAlready-posted entries stay; it just won\'t repeat.')) return;
+  DB.finance.recurring.splice(i, 1);
+  saveDB();
+  openFinRecurring();
+}
+
+/* ---- Yearly מעשר / bookkeeping report ---- */
+function openFinanceYearReport(year) {
+  _ensureFinance();
+  const now = new Date();
+  const y = year || now.getFullYear();
+  const c = DB.finance.cfg;
+  const months = [];
+  for (let m = 0; m < 12; m++) {
+    const key = y + '-' + String(m + 1).padStart(2, '0');
+    let cls = 0;
+    if (c.includeClasses) {
+      (DB.payments || []).forEach(p => {
+        const ymd = _dateToYMD(p.date);
+        if (!ymd || ymd.slice(0, 7) !== key) return;
+        if (c.classesFrom && ymd < c.classesFrom) return;
+        cls += parseFloat(p.paid) || 0;
+      });
+    }
+    let inc = 0, exp = 0, giv = 0;
+    DB.finance.entries.forEach(e => {
+      const ymd = _dateToYMD(e.date);
+      if (!ymd || ymd.slice(0, 7) !== key) return;
+      const a = parseFloat(e.amount) || 0;
+      if (e.type === 'income') inc += a; else if (e.type === 'expense') exp += a; else giv += a;
+    });
+    const gross = cls + inc;
+    const base = c.base === 'net' ? Math.max(0, gross - exp) : gross;
+    months.push({ label: new Date(y, m, 1).toLocaleString('default', { month: 'short' }), cls, inc, exp, giv, owed: base * (c.maaserRate / 100) });
+  }
+  const tot = months.reduce((a, r) => ({ cls: a.cls + r.cls, inc: a.inc + r.inc, exp: a.exp + r.exp, giv: a.giv + r.giv, owed: a.owed + r.owed }), { cls: 0, inc: 0, exp: 0, giv: 0, owed: 0 });
+
+  let h = '<div class="mh"><h2>📆 ' + y + ' — Yearly report</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<div style="margin-bottom:10px"><button class="btn btn-gray btn-sm" onclick="openFinanceYearReport(' + (y - 1) + ')">← ' + (y - 1) + '</button> ' +
+    '<strong style="margin:0 8px">' + y + '</strong>' +
+    (y < now.getFullYear() ? '<button class="btn btn-gray btn-sm" onclick="openFinanceYearReport(' + (y + 1) + ')">' + (y + 1) + ' →</button>' : '') + '</div>';
+  h += '<div class="tw"><table style="margin:0"><thead><tr><th>Month</th><th>Class income</th><th>Other income</th><th>Expenses</th><th>מעשר owed</th><th>מעשר given</th></tr></thead><tbody>';
+  months.forEach(r => {
+    const any = r.cls || r.inc || r.exp || r.giv;
+    h += '<tr' + (any ? '' : ' style="opacity:0.45"') + '><td><strong>' + r.label + '</strong></td>' +
+      '<td>' + _money(r.cls) + '</td><td>' + _money(r.inc) + '</td><td>' + _money(r.exp) + '</td>' +
+      '<td>' + _money(r.owed) + '</td><td>' + _money(r.giv) + '</td></tr>';
+  });
+  h += '<tr style="background:#1a3a5c;color:#fff;font-weight:700"><td>TOTAL</td>' +
+    '<td>' + _money(tot.cls) + '</td><td>' + _money(tot.inc) + '</td><td>' + _money(tot.exp) + '</td>' +
+    '<td>' + _money(tot.owed) + '</td><td>' + _money(tot.giv) + '</td></tr>';
+  h += '</tbody></table></div>';
+  const still = tot.owed - tot.giv;
+  h += '<div style="margin-top:10px;padding:10px;border-radius:6px;font-weight:700;' + (still > 0.005 ? 'background:#fdecea;color:#c0392b' : 'background:#e8f5e9;color:#2e7d32') + '">' +
+    (still > 0.005 ? 'מעשר still to give for ' + y + ': ' + _money(still) : '✓ מעשר fully covered for ' + y + (still < -0.005 ? ' (gave ' + _money(-still) + ' extra)' : '')) + '</div>';
+  h += '<div class="factions"><button class="btn btn-blue" onclick="window.print()">🖨 Print</button><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
+}
+
+/* ---- Finance CSV export ---- */
+function exportFinanceCSV() {
+  _ensureFinance();
+  const rows = [['Date', 'Type', 'Amount', 'Category', 'Note']];
+  DB.finance.entries.forEach(e => rows.push([e.date || '', e.type || '', String(parseFloat(e.amount) || 0), e.category || '', e.note || '']));
+  const csv = rows.map(r => r.map(v => { let s = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; }).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'Finances_' + localISODate() + '.csv'; a.click();
+  URL.revokeObjectURL(url);
 }
 
 /* ============ RECYCLE BIN — nothing is destroyed instantly ============
@@ -7532,33 +7692,41 @@ const _TOUR_SECTIONS = {
   'finale': { name: 'You\'re Ready', cls: 'cl-finale', icon: '🎉' }
 };
 const _TOUR_STEPS = [
-  // v24: 15 slideshow steps, each with a hero emoji + concise content.
+  // Rebuilt tour — covers every feature in plain English, written for a non-technical user.
   // Optional `jumpTo` field = a tab to jump to when user clicks the orange action button.
-  { sec: 'getting-started', emoji: '👋', title: 'Welcome to your app!', body: 'A quick visual tour of <strong>every</strong> feature — about 90 seconds.<br><br>Use <kbd>→</kbd> / <kbd>←</kbd> arrows, click the buttons, or jump between sections with the colored dots above. <kbd>Esc</kbd> to skip any time.' },
+  { sec: 'getting-started', emoji: '👋', title: 'Welcome!', body: 'This short tour shows you everything the app can do — in plain English, about 2 minutes.<br><br>Use the <strong>Next</strong> button (or <kbd>→</kbd> arrow). Press <kbd>Esc</kbd> any time to stop. You can restart it whenever you like from the 🎓 button.' },
+  { sec: 'getting-started', emoji: '✏️', title: 'The Edit switch', body: 'The <strong>Edit</strong> switch at the top right is the key to everything.<br><br>• Edit <strong>OFF</strong> — you can only look. Nothing can be changed by mistake.<br>• Edit <strong>ON</strong> — you can record payments, charge, and manage members.<br><br>When in doubt, leave it off.' },
 
   // --- Daily workflow ---
-  { sec: 'daily-workflow', emoji: '📊', title: 'Dashboard at a glance', body: 'Live numbers — active members, who owes, total outstanding, total collected, paused — all updating instantly with every change.', preview: { title: 'Sample stats', body: '<strong>57</strong> active · <strong>40</strong> owe · <strong>$5,983</strong> outstanding · <strong>$62,714</strong> collected' }, jumpTo: 'dashboard' },
-  { sec: 'daily-workflow', emoji: '⚠️', title: 'Who owes money', body: 'A live list right on the dashboard. Click a name to open their profile. The <strong>📱 SMS</strong> button sends a reminder.<br><br>In Pro: <strong>📧 Email</strong>, <strong>🔗 Statement Link</strong>, <strong>🧾 QR</strong> code.', preview: { title: 'Reminder example', body: '"Hi Sara! Just a friendly reminder that your balance for exercise class is $45. Thanks!"' } },
-  { sec: 'daily-workflow', emoji: '👥', title: 'Members & profiles', body: 'Every member in one place. Avatars (photo or auto-generated initials), colored tags (VIP, New, Discount...), full payment history, custom fields.', jumpTo: 'members' },
-  { sec: 'daily-workflow', emoji: '💳', title: 'Smart "Charge Everyone"', body: 'Charge a whole group in one click. The app warns if:<br><br>• You\'re charging Monday group on a <em>Tuesday</em><br>• You already charged this group today<br>• The amount looks unusually large<br><br>Catches expensive mistakes before they happen.', jumpTo: 'groups' },
-  { sec: 'daily-workflow', emoji: '📝', title: 'Notes — combo library', body: 'Your exercise routines, organized. Editable categories, nested folders, drag-and-drop. Upload <strong>Word, PDF, or text</strong> documents to auto-import combos.', jumpTo: 'notes' },
-  { sec: 'daily-workflow', emoji: '📈', title: 'Reports & insights', body: 'Revenue by month with bar charts. By group. By payment method. Top 10 payers. Top 10 owers. Tag breakdown. Print-friendly.', jumpTo: 'reports' },
+  { sec: 'daily-workflow', emoji: '📊', title: 'Dashboard', body: 'Your home page. Live numbers: how many members, who owes, total outstanding, total collected. The <strong>"Members who owe"</strong> list is right there — click a name to see everything about them, or 📱 to send a reminder text.', jumpTo: 'dashboard' },
+  { sec: 'daily-workflow', emoji: '💰', title: 'Recording a payment', body: 'Someone paid you? Click the big green <strong>Record a Payment</strong> button, pick their name, type the amount, done.<br><br>Your usual payment method is already pre-selected (set it in Advanced → Payments). The balance updates by itself.' },
+  { sec: 'daily-workflow', emoji: '📅', title: 'Charge for the Month', body: 'The 1st-of-the-month workflow: open <strong>Groups</strong>, click <strong>📅 Charge for Month</strong> on a group card, say how many classes — everyone gets billed at once, each at their own rate with discounts applied.<br><br>Made a mistake? <strong>📋 Billing History</strong> has an <strong>↩ Undo</strong> button on every charge.', jumpTo: 'groups' },
+  { sec: 'daily-workflow', emoji: '💳', title: 'Other ways to charge', body: '• <strong>💳 Charge Everyone</strong> — one class, whole group<br>• <strong>📅 Take Attendance</strong> — tick who showed up, charge only them<br>• <strong>💸 Class Canceled</strong> — give everyone their money back for a canceled class<br><br>The app warns you before double-charging or charging on the wrong day.' },
+  { sec: 'daily-workflow', emoji: '☑️', title: 'Do many at once (bulk)', body: 'On the <strong>Members</strong> tab with Edit on, tick the boxes next to several names — a blue bar appears:<br><br>💰 Record payment for all · 💳 Charge all · 🗂 Move group · 🗃 Archive · 🗑 Delete<br><br>Twenty people, one click.', jumpTo: 'members' },
+  { sec: 'daily-workflow', emoji: '✏️', title: 'Fix a payment mistake', body: 'Typed $50 instead of $15? On the <strong>Payments</strong> tab, click the ✏ next to any payment to change the amount, date, or method. The member\'s balance corrects itself automatically.', jumpTo: 'payments' },
 
-  // --- Customization ---
-  { sec: 'customization', emoji: '📐', title: 'Three complexity levels', body: '<strong>🌱 Simple</strong> — for your mom or anyone non-technical. Hides advanced features.<br><strong>🌿 Standard</strong> — most users.<br><strong>🌳 Pro</strong> — every feature.<br><br>Switch any time. No data is ever lost.' },
-  { sec: 'customization', emoji: '🎨', title: 'Make it yours', body: 'Rename the app, change the emoji, swap <code>$</code> for <code>₪ € £ ¥</code>. Pick Light, Dark, or fully Custom theme with 5 color pickers. Edit groups, categories, payment methods, SMS templates.' },
-  { sec: 'customization', emoji: '📋', title: 'Custom fields & tags', body: 'Add fields applied to every member: <em>Address, Allergies, Emergency Contact, Locker #</em>. Four types: text, long text, number, date. Plus colored tags: <em>VIP, New, Discount, Trial</em>.' },
+  // --- Money / finances ---
+  { sec: 'power', emoji: '💵', title: 'מעשר & Finances', body: 'A full bookkeeping tab! Class income counts <strong>automatically</strong> — you never type it twice. Add any other income (another job, babysitting), expenses, and מעשר you gave.<br><br>It always shows exactly how much מעשר you still owe. Choose 10% מעשר or 20% חומש, from gross or net — it starts counting from today, so you begin at $0.', jumpTo: 'finance' },
+  { sec: 'power', emoji: '🔁', title: 'Monthly auto-entries', body: 'Rent, a salary, tuition — things that repeat every month can post themselves. In the Finances tab click <strong>🔁 Monthly auto-entries</strong>, set the amount and day of the month, and forget about it.' },
+  { sec: 'power', emoji: '📆', title: 'Yearly report', body: 'One click in the Finances tab: every month of the year — class income, other income, expenses, מעשר owed and given — with a bottom line telling you if you\'re caught up. Print-friendly for your records.' },
 
-  // --- Power features ---
-  { sec: 'power', emoji: '✨', title: 'Power features (toggle on/off)', body: '📅 Class attendance · 👨‍👩‍👧 Family grouping · 🔁 Recurring billing · 🏷 Discounts · 📅 Holidays · 🎂 Birthday greetings · 🔗 Statement links · 🧾 QR codes · 🌙 Auto dark mode<br><br>Turn on only what you need.' },
-  { sec: 'power', emoji: '👨‍👩‍👧', title: 'Family discounts', body: 'Mark members "Primary" or "Secondary" in their family. Set the discount once (50% off, 100% off, whatever). Auto-applied on every charge — attendance, recurring, group charge.' },
+  // --- Cleanup & control ---
+  { sec: 'customization', emoji: '🧹', title: 'Fix My Numbers', body: 'Totals look wrong? <strong>⚙ Menu → 🧹 Fix My Numbers</strong> finds "ghost" money — leftover data from deleted members — and unusually large amounts, and removes them safely.<br><br>This is the tool to reach for when something doesn\'t add up.' },
+  { sec: 'customization', emoji: '🩺', title: 'Check & Repair', body: '<strong>⚙ Menu → 🩺 Check & Repair Totals</strong> compares every member\'s "Total Paid" against their actual payments and fixes any that disagree — one button.' },
+  { sec: 'customization', emoji: '🔀', title: 'Merge duplicates', body: 'Same person entered twice ("Sara" and "Sarah")? <strong>⚙ Menu → 🔀 Merge Duplicates</strong> combines them — payments, balance, everything moves onto the one you keep.' },
+  { sec: 'customization', emoji: '📅', title: 'This Month at a Glance', body: '<strong>⚙ Menu → 📅 This Month at a Glance</strong>: how much you collected (vs. last month), who joined, who left, and the top open balances. Your monthly check-in, ready in one click.' },
 
   // --- Safety ---
-  { sec: 'safety', emoji: '🛡', title: 'Built-in safety net', body: 'Every risky action confirms. Duplicate payments warn. Unusual amounts warn. Wrong day-of-week warns.<br><br>Plus: <strong>↶ Undo</strong> button after every change, <strong>🔒 Read-only lock</strong>, <strong>🔑 PIN protection</strong>, <strong>🩺 Self-test</strong> on load.' },
-  { sec: 'safety', emoji: '💾', title: 'Backups (important!)', body: '<strong>localStorage can be wiped</strong> at any time by your browser. Backup files are your only safe insurance.<br><br>Click <strong>💾 Save to File</strong> in the Menu often. The app warns if you haven\'t saved in 1+ day.' },
+  { sec: 'safety', emoji: '♻', title: 'The Recycle Bin', body: 'Deleted something by accident? <strong>Nothing is ever destroyed instantly.</strong> Every delete goes to <strong>⚙ Menu → ♻ Recycle Bin</strong> first — one click puts it back exactly as it was, money and all.' },
+  { sec: 'safety', emoji: '⏪', title: 'Change History', body: 'The app remembers your last 30 actions. <strong>⚙ Menu → ⏪ Change History</strong> lets you rewind to before ANY of them — like time travel for mistakes.<br><br>There\'s also an orange <strong>↶ Undo</strong> button right after every change.' },
+  { sec: 'safety', emoji: '🗑', title: 'Deleting — you choose what', body: 'When you delete a member you get a <strong>checklist</strong>: just their payments? just the member card? everything? Only what you tick is removed — and it all goes through the Recycle Bin.' },
+  { sec: 'safety', emoji: '☁', title: 'Cloud sync & backups', body: 'With cloud sync on, every change saves to the cloud automatically — phone and computer stay matched, safely.<br><br>Also click <strong>💾 Save to File</strong> in the Menu once in a while: a backup file is insurance nothing can take away.' },
+
+  // --- Customization ---
+  { sec: 'power', emoji: '🎨', title: 'Make it yours', body: 'Settings lets you rename the app, change colors and themes, edit your groups and payment methods, set your currency, add custom member fields (allergies, locker #...) and colored tags (VIP, New...).<br><br>⚡ Extra features like attendance, families, discounts and birthday texts can be switched on in Settings too.' },
 
   // --- Finale ---
-  { sec: 'finale', emoji: '🎉', title: 'You\'re ready!', body: '• <strong>🎓 button</strong> bottom-right restarts this tour any time<br>• <strong>📨 Send Feedback</strong> in Settings reports bugs / requests features<br>• <strong>Save backups daily</strong> 💾<br><br>Happy organizing! 💪' }
+  { sec: 'finale', emoji: '🎉', title: 'You\'re ready!', body: 'Remember the big three:<br><br>• <strong>Edit switch</strong> on to change things, off to be safe<br>• <strong>⚙ Menu</strong> has all the tools (cleanup, bin, history...)<br>• Mistakes are always fixable — <strong>♻ Recycle Bin</strong> and <strong>⏪ Change History</strong><br><br>Restart this tour any time with the 🎓 button. 💪' }
 ];
 
 // v23: Tour "Try It" handlers — small interactive demos
@@ -9638,6 +9806,7 @@ setTimeout(async function() {
       try { await syncNow('auto', { silent: true }); } catch (e) { console.warn('Pre-billing sync failed:', e); }
     }
     _runRecurringBilling();
+    if (typeof _runFinanceRecurring === 'function') _runFinanceRecurring();
   } catch (e) { console.warn('Recurring billing error:', e); }
 }, 1800); // 300ms after the 1500ms initial sync kicks off, so we don't double-pull
 
