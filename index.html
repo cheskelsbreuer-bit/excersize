@@ -3145,6 +3145,31 @@ function _finSums() {
   return { classIncome, otherIncome, expenses, maaserGiven, gross, base, owedTotal, owedLeft: owedTotal - maaserGiven };
 }
 const _FIN_CATS = ['Classes', 'Other job', 'Babysitting', 'Gifts', 'Rent', 'Utilities', 'Groceries', 'Tuition', 'Medical', 'Car', 'Tzedaka', 'Other'];
+let _finFilter = { month: '', type: '', cat: '', q: '' };
+// One-click: record the whole remaining מעשר as given right now.
+function finGiveMaaserNow() {
+  _ensureFinance();
+  const s = _finSums();
+  if (s.owedLeft <= 0.005) { alert('Nothing left to give — you are fully caught up. 🎉'); return; }
+  const amt = Math.round(s.owedLeft * 100) / 100;
+  const to = prompt('Record מעשר of ' + _money(amt) + ' as given.\n\nWho did it go to? (optional — e.g. Tomchei Shabbos)', '');
+  if (to === null) return;
+  const d = new Date();
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type: 'maaser', amount: amt, date: (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(), note: to.trim(), category: 'Tzedaka' });
+  logAction('settings', 'finance', 'מעשר given ' + _money(amt) + (to.trim() ? ' — ' + to.trim() : ''));
+  saveDB();
+  renderFinance();
+  alert('🤲 Recorded. You are fully caught up.');
+}
+function finSetFilter() {
+  _finFilter.month = document.getElementById('ff-month') ? document.getElementById('ff-month').value : '';
+  _finFilter.type = document.getElementById('ff-type') ? document.getElementById('ff-type').value : '';
+  _finFilter.cat = document.getElementById('ff-cat') ? document.getElementById('ff-cat').value : '';
+  _finFilter.q = document.getElementById('ff-q') ? document.getElementById('ff-q').value : '';
+  renderFinance();
+  const q = document.getElementById('ff-q');
+  if (q && _finFilter.q) { q.focus(); try { q.setSelectionRange(q.value.length, q.value.length); } catch (e) {} }
+}
 function renderFinance() {
   _ensureFinance();
   _runFinanceRecurring();
@@ -3160,8 +3185,68 @@ function renderFinance() {
     '<div class="sc o"><div class="v">' + _money(s.expenses) + '</div><div class="l">Expenses</div></div>' +
     '<div class="sc"><div class="v">' + _money(s.owedTotal) + '</div><div class="l">מעשר owed (' + c.maaserRate + '% of ' + (c.base === 'net' ? 'net' : 'gross') + ')</div></div>' +
     '<div class="sc g"><div class="v">' + _money(s.maaserGiven) + '</div><div class="l">מעשר given</div></div>' +
-    '<div class="sc ' + (s.owedLeft > 0.005 ? 'r' : 'g') + '"><div class="v">' + _money(Math.max(0, s.owedLeft)) + '</div><div class="l">' + (s.owedLeft > 0.005 ? 'מעשר still to give' : 'All caught up ✓') + '</div></div>' +
+    '<div class="sc ' + (s.owedLeft > 0.005 ? 'r' : 'g') + '"><div class="v">' + _money(Math.max(0, s.owedLeft)) + '</div><div class="l">' + (s.owedLeft > 0.005 ? 'מעשר still to give' : 'All caught up ✓') + '</div>' +
+      (editMode && s.owedLeft > 0.005 ? '<button class="btn btn-green btn-sm" style="margin-top:6px" onclick="finGiveMaaserNow()">🤲 Give it now</button>' : '') + '</div>' +
   '</div>';
+
+  // ---- 6-month trend (simple CSS bars: green income, orange expenses) ----
+  (function () {
+    const now = new Date();
+    const cols = [];
+    let maxV = 1;
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = _monthKey(d);
+      let inc = 0, exp = 0;
+      if (DB.finance.cfg.includeClasses) {
+        (DB.payments || []).forEach(p => {
+          const ymd = _dateToYMD(p.date);
+          if (!ymd || ymd.slice(0, 7) !== key) return;
+          if (DB.finance.cfg.classesFrom && ymd < DB.finance.cfg.classesFrom) return;
+          inc += parseFloat(p.paid) || 0;
+        });
+      }
+      DB.finance.entries.forEach(e => {
+        const ymd = _dateToYMD(e.date);
+        if (!ymd || ymd.slice(0, 7) !== key) return;
+        const a = parseFloat(e.amount) || 0;
+        if (e.type === 'income') inc += a; else if (e.type === 'expense') exp += a;
+      });
+      maxV = Math.max(maxV, inc, exp);
+      cols.push({ label: d.toLocaleString('default', { month: 'short' }), inc, exp });
+    }
+    if (cols.some(c => c.inc || c.exp)) {
+      h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:14px;margin-bottom:14px">' +
+        '<strong style="display:block;margin-bottom:10px;font-size:0.9rem">📊 Last 6 months — <span style="color:#2e7d32">income</span> vs <span style="color:#e67e22">expenses</span></strong>' +
+        '<div style="display:flex;gap:12px;align-items:flex-end;height:110px">' +
+        cols.map(c =>
+          '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end">' +
+            '<div style="display:flex;gap:3px;align-items:flex-end;width:100%;height:80px;justify-content:center">' +
+              '<div title="Income ' + _money(c.inc) + '" style="width:38%;background:#4a8c4a;border-radius:3px 3px 0 0;height:' + Math.max(2, Math.round(c.inc / maxV * 80)) + 'px"></div>' +
+              '<div title="Expenses ' + _money(c.exp) + '" style="width:38%;background:#e67e22;border-radius:3px 3px 0 0;height:' + Math.max(2, Math.round(c.exp / maxV * 80)) + 'px"></div>' +
+            '</div>' +
+            '<span style="font-size:0.7rem;color:#888">' + c.label + '</span>' +
+          '</div>').join('') +
+        '</div></div>';
+    }
+  })();
+
+  // ---- category breakdown ----
+  (function () {
+    const byCat = {};
+    DB.finance.entries.forEach(e => {
+      const cat = (e.category || 'Uncategorized');
+      if (!byCat[cat]) byCat[cat] = { income: 0, expense: 0, maaser: 0 };
+      byCat[cat][e.type === 'income' ? 'income' : (e.type === 'expense' ? 'expense' : 'maaser')] += parseFloat(e.amount) || 0;
+    });
+    const cats = Object.keys(byCat).sort();
+    if (cats.length) {
+      h += '<details style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px"><summary style="cursor:pointer;font-weight:700">📂 By category</summary>' +
+        '<div class="tw"><table style="margin-top:8px"><thead><tr><th>Category</th><th>Income</th><th>Expenses</th><th>מעשר given</th></tr></thead><tbody>' +
+        cats.map(c => '<tr><td><strong>' + _esc(c) + '</strong></td><td>' + _money(byCat[c].income) + '</td><td>' + _money(byCat[c].expense) + '</td><td>' + _money(byCat[c].maaser) + '</td></tr>').join('') +
+        '</tbody></table></div></details>';
+    }
+  })();
 
   // ---- quick add ----
   if (editMode) {
@@ -3209,11 +3294,33 @@ function renderFinance() {
     '<p style="font-size:0.78rem;color:#888;margin-top:8px">Class income (' + _money(s.classIncome) + ') is read automatically from the Payments tab — no need to enter it again. Ask your rav which calculation applies to you; this is bookkeeping, not a psak.</p>' +
   '</details>';
 
-  // ---- entries table ----
-  const entries = DB.finance.entries.slice().sort((a, b) => (_dateToYMD(b.date) || '').localeCompare(_dateToYMD(a.date) || ''));
+  // ---- filters + entries table ----
+  const allEntries = DB.finance.entries.slice().sort((a, b) => (_dateToYMD(b.date) || '').localeCompare(_dateToYMD(a.date) || ''));
+  const monthsSeen = [...new Set(allEntries.map(e => (_dateToYMD(e.date) || '').slice(0, 7)).filter(Boolean))].sort().reverse();
+  const catsSeen = [...new Set(allEntries.map(e => e.category || '').filter(Boolean))].sort();
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">' +
+    '<input id="ff-q" type="text" placeholder="🔍 Search notes..." value="' + esc(_finFilter.q) + '" oninput="finSetFilter()" style="flex:1;min-width:140px">' +
+    '<select id="ff-month" onchange="finSetFilter()"><option value="">All months</option>' + monthsSeen.map(mk => '<option value="' + mk + '"' + (_finFilter.month === mk ? ' selected' : '') + '>' + new Date(+mk.slice(0, 4), +mk.slice(5, 7) - 1, 1).toLocaleString('default', { month: 'short', year: 'numeric' }) + '</option>').join('') + '</select>' +
+    '<select id="ff-type" onchange="finSetFilter()"><option value="">All types</option>' +
+      '<option value="income"' + (_finFilter.type === 'income' ? ' selected' : '') + '>💰 Income</option>' +
+      '<option value="expense"' + (_finFilter.type === 'expense' ? ' selected' : '') + '>🧾 Expense</option>' +
+      '<option value="maaser"' + (_finFilter.type === 'maaser' ? ' selected' : '') + '>🤲 מעשר</option></select>' +
+    '<select id="ff-cat" onchange="finSetFilter()"><option value="">All categories</option>' + catsSeen.map(c => '<option value="' + esc(c) + '"' + (_finFilter.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('') + '</select>' +
+  '</div>';
+  const entries = allEntries.filter(e => {
+    if (_finFilter.month && (_dateToYMD(e.date) || '').slice(0, 7) !== _finFilter.month) return false;
+    if (_finFilter.type && e.type !== _finFilter.type) return false;
+    if (_finFilter.cat && (e.category || '') !== _finFilter.cat) return false;
+    if (_finFilter.q && (e.note || '').toLowerCase().indexOf(_finFilter.q.toLowerCase()) < 0) return false;
+    return true;
+  });
+  const fSum = entries.reduce((a, e) => { a[e.type] = (a[e.type] || 0) + (parseFloat(e.amount) || 0); return a; }, {});
+  if (_finFilter.month || _finFilter.type || _finFilter.cat || _finFilter.q) {
+    h += '<div style="font-size:0.82rem;color:#555;margin-bottom:6px">Showing ' + entries.length + ' of ' + allEntries.length + ' — income ' + _money(fSum.income || 0) + ' · expenses ' + _money(fSum.expense || 0) + ' · מעשר ' + _money(fSum.maaser || 0) + '</div>';
+  }
   h += '<div class="tw"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Category</th><th>Note</th>' + (editMode ? '<th></th>' : '') + '</tr></thead><tbody>';
   if (!entries.length) {
-    h += '<tr><td colspan="6" class="empty">No entries yet. Class income still counts automatically (' + _money(s.classIncome) + ' so far).</td></tr>';
+    h += '<tr><td colspan="6" class="empty">' + (allEntries.length ? 'Nothing matches your filter.' : 'No entries yet. Class income still counts automatically (' + _money(s.classIncome) + ' so far).') + '</td></tr>';
   } else {
     entries.forEach(e => {
       const idx = DB.finance.entries.indexOf(e);
@@ -3222,7 +3329,7 @@ function renderFinance() {
         '<td><strong>' + _money(parseFloat(e.amount) || 0) + '</strong></td>' +
         '<td style="font-size:0.82rem">' + _esc(e.category || '—') + '</td>' +
         '<td>' + _esc(e.note || '') + '</td>' +
-        (editMode ? '<td><button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')">✕</button></td>' : '') +
+        (editMode ? '<td style="white-space:nowrap"><button class="btn btn-orange btn-sm" onclick="finEditEntry(' + idx + ')" title="Edit">✏</button> <button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')" title="Delete">✕</button></td>' : '') +
         '</tr>';
     });
   }
@@ -3240,6 +3347,45 @@ function finAddEntry() {
   const cat = (document.getElementById('fin-cat') ? document.getElementById('fin-cat').value.trim() : '');
   DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type, amount: amt, date, note, category: cat });
   logAction('settings', 'finance', (type === 'maaser' ? 'מעשר given ' : type + ' ') + _money(amt) + (note ? ' — ' + note : ''));
+  saveDB();
+  renderFinance();
+}
+function finEditEntry(idx) {
+  _ensureFinance();
+  const e = DB.finance.entries[idx];
+  if (!e) return;
+  document.getElementById('ov-charge-body').innerHTML =
+    '<div class="mh"><h2>✏ Edit entry</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>Type</label><select id="fe-type">' +
+        '<option value="income"' + (e.type === 'income' ? ' selected' : '') + '>💰 Income</option>' +
+        '<option value="expense"' + (e.type === 'expense' ? ' selected' : '') + '>🧾 Expense</option>' +
+        '<option value="maaser"' + (e.type === 'maaser' ? ' selected' : '') + '>🤲 מעשר given</option></select></div>' +
+      '<div class="fg"><label>Amount (' + _curr() + ')</label><input id="fe-amt" type="number" step="0.01" value="' + (parseFloat(e.amount) || 0) + '"></div>' +
+      '<div class="fg"><label>Date</label><input id="fe-date" type="date" value="' + esc(toISODate(e.date || '')) + '"></div>' +
+      '<div class="fg"><label>Category</label><input id="fe-cat" type="text" list="fin-cat-list" value="' + esc(e.category || '') + '"></div>' +
+      '<div class="fg" style="grid-column:1/-1"><label>Note</label><input id="fe-note" type="text" value="' + esc(e.note || '') + '"></div>' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
+      '<button class="btn btn-green" onclick="finSaveEditEntry(' + idx + ')">💾 Save</button>' +
+    '</div>';
+  openOv('ov-charge');
+}
+function finSaveEditEntry(idx) {
+  _ensureFinance();
+  const e = DB.finance.entries[idx];
+  if (!e) return;
+  const amt = parseFloat(document.getElementById('fe-amt').value);
+  if (isNaN(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
+  e.type = document.getElementById('fe-type').value;
+  e.amount = amt;
+  const dr = document.getElementById('fe-date').value;
+  if (dr) { const d = parseLocalDate(dr); e.date = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(); }
+  e.category = document.getElementById('fe-cat').value.trim();
+  e.note = document.getElementById('fe-note').value.trim();
+  logAction('settings', 'finance', 'Edited finance entry (' + e.type + ' ' + _money(amt) + ')');
+  closeOv('ov-charge');
   saveDB();
   renderFinance();
 }
@@ -3527,6 +3673,8 @@ function openMergeMembers() {
   openOv('ov-charge');
 }
 function doMergeMembers() {
+  // PREVIEW step — show exactly what will happen; nothing merges until the user clicks
+  // the explicit "Yes, merge them" button (user request: show first, approve after).
   const keepName = document.getElementById('mg-keep').value;
   const awayName = document.getElementById('mg-away').value;
   if (!keepName || !awayName) { alert('Choose both members.'); return; }
@@ -3535,11 +3683,25 @@ function doMergeMembers() {
   const away = DB.members.find(m => m.name === awayName);
   if (!keep || !away) { alert('Member not found.'); return; }
   const fpAway = _memberFootprint(awayName);
-  if (!confirm('Merge "' + awayName + '" INTO "' + keepName + '"?\n\n' +
-    '• ' + fpAway.payments.length + ' payment(s) move over\n' +
-    '• Balance ' + _money(away.balance || 0) + ' is added to ' + keepName + '\'s balance\n' +
-    '• Totals and class counts are combined\n' +
-    '• "' + awayName + '" is removed (recoverable from the Recycle Bin)\n\nContinue?')) return;
+  document.getElementById('ov-charge-body').innerHTML =
+    '<div class="mh"><h2>🔀 Check this before merging</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<p style="color:#555;font-size:0.88rem;background:#fff8e1;padding:10px;border-radius:6px;border-left:4px solid #f0b400;margin-bottom:12px">Nothing has happened yet. Look this over, then decide.</p>' +
+    '<div class="tw"><table style="margin-bottom:12px"><thead><tr><th></th><th>KEEP: ' + _esc(keepName) + '</th><th>REMOVE: ' + _esc(awayName) + '</th><th>After merge</th></tr></thead><tbody>' +
+      '<tr><td><strong>Balance</strong></td><td>' + _money(keep.balance || 0) + '</td><td>' + _money(away.balance || 0) + '</td><td><strong>' + _money((keep.balance || 0) + (away.balance || 0)) + '</strong></td></tr>' +
+      '<tr><td><strong>Total Paid</strong></td><td>' + _money(keep.totalPaid || 0) + '</td><td>' + _money(away.totalPaid || 0) + '</td><td><strong>' + _money((keep.totalPaid || 0) + (away.totalPaid || 0)) + '</strong></td></tr>' +
+      '<tr><td><strong>Classes</strong></td><td>' + (keep.totalClasses || 0) + '</td><td>' + (away.totalClasses || 0) + '</td><td><strong>' + ((keep.totalClasses || 0) + (away.totalClasses || 0)) + '</strong></td></tr>' +
+      '<tr><td><strong>Payments on file</strong></td><td>' + (DB.payments || []).filter(p => p.name === keepName).length + '</td><td>' + fpAway.payments.length + '</td><td><strong>' + ((DB.payments || []).filter(p => p.name === keepName).length + fpAway.payments.length) + '</strong></td></tr>' +
+    '</tbody></table></div>' +
+    '<p style="font-size:0.82rem;color:#555">"' + _esc(awayName) + '" is removed afterwards (recoverable from the ♻ Recycle Bin).</p>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="openMergeMembers()">← Back</button>' +
+      '<button class="btn btn-blue" onclick="confirmMergeMembers(\'' + escJs(keepName) + '\',\'' + escJs(awayName) + '\')">✅ Yes, merge them</button>' +
+    '</div>';
+}
+function confirmMergeMembers(keepName, awayName) {
+  const keep = DB.members.find(m => m.name === keepName);
+  const away = DB.members.find(m => m.name === awayName);
+  if (!keep || !away) { alert('Member not found.'); return; }
   if (typeof _pushUndo === 'function') _pushUndo('Merge ' + awayName + ' into ' + keepName);
 
   _trashPush('Merged-away member "' + awayName + '"', { members: [JSON.parse(JSON.stringify(away))] });
@@ -3643,15 +3805,17 @@ function openRepairTotals() {
   } else {
     if (rows.length) {
       h += '<div style="background:#c0392b;color:#fff;padding:9px 13px;border-radius:8px 8px 0 0;font-weight:700">⚠ ' + rows.length + ' member(s) whose Total Paid does not match their payments</div>';
-      h += '<div class="tw"><table style="margin:0"><thead><tr><th>Member</th><th>Says</th><th>Actually</th><th>Off by</th></tr></thead><tbody>';
+      h += '<div style="background:#fff8e1;padding:8px 12px;font-size:0.82rem;color:#856404">Nothing is changed automatically. Tick the ones you want fixed, then click the button.</div>';
+      h += '<div class="tw"><table style="margin:0"><thead><tr><th><input type="checkbox" checked onchange="document.querySelectorAll(\'.rep-check\').forEach(c=>c.checked=this.checked)"></th><th>Member</th><th>Says</th><th>Actually</th><th>Off by</th></tr></thead><tbody>';
       rows.forEach(r => {
-        h += '<tr><td><strong>' + _esc(r.member.name) + '</strong></td>' +
+        h += '<tr><td><input type="checkbox" class="rep-check" data-name="' + esc(r.member.name) + '" checked></td>' +
+          '<td><strong>' + _esc(r.member.name) + '</strong></td>' +
           '<td>' + _money(r.stored) + '</td>' +
           '<td>' + _money(r.actual) + '</td>' +
           '<td style="color:#c0392b;font-weight:700">' + (r.diff > 0 ? '+' : '') + _money(r.diff) + '</td></tr>';
       });
       h += '</tbody></table></div>';
-      h += '<div style="margin:10px 0"><button class="btn btn-green" onclick="repairTotalsNow()">🔧 Fix all ' + rows.length + ' Total Paid figure(s)</button></div>';
+      h += '<div style="margin:10px 0"><button class="btn btn-green" onclick="repairTotalsNow()">🔧 Fix the ticked ones</button></div>';
     }
     if (nanish.length) {
       h += '<div style="background:#fff3cd;border-left:4px solid #f0b400;padding:9px 12px;border-radius:6px;margin-top:10px;font-size:0.85rem;color:#856404">' +
@@ -3667,9 +3831,12 @@ function openRepairTotals() {
   openOv('ov-billing-history');
 }
 function repairTotalsNow() {
-  const rows = _auditTotals();
+  // Only fix what the user explicitly TICKED — never everything by default (user request).
+  const ticked = new Set([...document.querySelectorAll('.rep-check:checked')].map(c => c.getAttribute('data-name')));
+  if (!ticked.size) { alert('Nothing ticked — tick the members you want fixed first.'); return; }
+  const rows = _auditTotals().filter(r => ticked.has(r.member.name));
   if (!rows.length) { alert('Nothing to fix.'); return; }
-  if (!confirm('Correct Total Paid for ' + rows.length + ' member(s) so it matches their actual payment records?\n\nThis only changes the "Total Paid" figure — balances are left alone.')) return;
+  if (!confirm('Correct Total Paid for these ' + rows.length + ' ticked member(s)?\n\n• ' + rows.map(r => r.member.name + ': ' + _money(r.stored) + ' → ' + _money(r.actual)).join('\n• ') + '\n\nOnly "Total Paid" changes — balances are left alone.')) return;
   if (typeof _pushUndo === 'function') _pushUndo('Repair totals for ' + rows.length + ' members');
   rows.forEach(r => { r.member.totalPaid = r.actual; });
   logAction('settings', 'repair', 'Repaired Total Paid for ' + rows.length + ' member(s)');
