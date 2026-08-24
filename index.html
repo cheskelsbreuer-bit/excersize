@@ -3249,6 +3249,21 @@ function finGiveMaaserNow() {
   renderFinance();
   alert('🤲 Recorded. You are fully caught up.');
 }
+// Pay the same person again (cleaning lady, taxes...) — one click, asks the amount with
+// the last payment pre-filled.
+function finPayAgain(payee) {
+  _ensureFinance();
+  const last = DB.finance.entries.find(e => e.type === 'expense' && (e.payee || '').trim() === payee);
+  const raw = prompt('Pay ' + payee + ' how much?', last ? (parseFloat(last.amount) || '') : '');
+  if (raw === null) return;
+  const amt = parseFloat(raw);
+  if (isNaN(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
+  const d = new Date();
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type: 'expense', amount: amt, date: (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(), note: (last && last.note) || '', category: (last && last.category) || '', payee: payee });
+  logAction('settings', 'finance', 'Paid ' + payee + ' ' + _money(amt));
+  saveDB();
+  renderFinance();
+}
 function finSetFilter() {
   _finFilter.month = document.getElementById('ff-month') ? document.getElementById('ff-month').value : '';
   _finFilter.type = document.getElementById('ff-type') ? document.getElementById('ff-type').value : '';
@@ -3292,6 +3307,32 @@ function renderFinance() {
     '<span class="fx-chip">✓ given <strong>' + _money(s.maaserGiven) + '</strong></span>' +
     (c.includeClasses ? '<span class="fx-chip" title="Counted automatically from the Payments tab">🏋️ from classes <strong>' + _money(s.classIncome) + '</strong> <span style="color:#99a">auto</span></span>' : '') +
   '</div>';
+
+  // ---- PEOPLE YOU PAY card (cleaning lady, taxes...) ----
+  (function () {
+    const byPayee = {};
+    DB.finance.entries.forEach(e => {
+      if (e.type !== 'expense' || !e.payee) return;
+      const k = e.payee.trim();
+      if (!k) return;
+      if (!byPayee[k]) byPayee[k] = { total: 0, count: 0, last: null };
+      byPayee[k].total += parseFloat(e.amount) || 0;
+      byPayee[k].count++;
+      if (!byPayee[k].last) byPayee[k].last = e;   // entries are newest-first
+    });
+    const names = Object.keys(byPayee).sort((a, b) => byPayee[b].total - byPayee[a].total);
+    if (!names.length) return;
+    let body = '';
+    names.forEach(n => {
+      const p = byPayee[n];
+      body += '<div class="fx-row"><span style="flex:1;min-width:120px"><strong>' + _esc(n) + '</strong><br>' +
+        '<span style="color:#889;font-size:0.78rem">' + p.count + ' payment(s) · ' + _money(p.total) + ' total · last ' + _esc(p.last.date || '') + '</span></span>' +
+        '<span style="font-weight:700">' + _money(parseFloat(p.last.amount) || 0) + '</span>' +
+        (editMode ? ' <button class="btn btn-green btn-sm" onclick="finPayAgain(\'' + escJs(n) + '\')">💳 Pay again</button>' : '') +
+      '</div>';
+    });
+    h += _card('🧹', '#e3f0fa', 'People you pay', '', body);
+  })();
 
   // ---- friendly first-time welcome ----
   if (!DB.finance.entries.length && !DB.finance.bills.length && !DB.finance.budgets.length && !DB.finance.goals.length) {
@@ -3448,6 +3489,8 @@ function renderFinance() {
         '<div class="fg"><label>Amount (' + _curr() + ') *</label><input id="fin-amt" type="number" step="0.01" placeholder="0"></div>' +
         '<div class="fg"><label>Date</label><input id="fin-date" type="date" value="' + localISODate() + '"></div>' +
         '<div class="fg"><label>Category</label><input id="fin-cat" type="text" list="fin-cat-list" placeholder="e.g. Other job / Rent"><datalist id="fin-cat-list">' + _FIN_CATS.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist></div>' +
+        '<div class="fg"><label>Paid to <span class="hint">(optional — for expenses)</span></label><input id="fin-payee" type="text" list="fin-payee-list" placeholder="e.g. Cleaning lady / Taxes"><datalist id="fin-payee-list">' +
+          [...new Set(['Cleaning lady', 'Taxes'].concat(DB.finance.entries.map(e => (e.payee || '').trim()).filter(Boolean)))].map(x => '<option value="' + esc(x) + '">').join('') + '</datalist></div>' +
         '<div class="fg"><label>Note</label><input id="fin-note" type="text" placeholder="e.g. babysitting / rent / to Tomchei Shabbos"></div>' +
       '</div>' +
       '<div class="fx-toolbar" style="margin-top:10px">' +
@@ -3522,7 +3565,7 @@ function renderFinance() {
       h += '<tr><td style="white-space:nowrap">' + _esc(e.date || '') + '</td><td>' + pill + '</td>' +
         '<td><strong>' + _money(parseFloat(e.amount) || 0) + '</strong></td>' +
         '<td style="font-size:0.82rem">' + _esc(e.category || '—') + '</td>' +
-        '<td>' + _esc(e.note || '') + '</td>' +
+        '<td>' + (e.payee ? '<strong>' + _esc(e.payee) + '</strong>' + (e.note ? ' — ' : '') : '') + _esc(e.note || '') + '</td>' +
         (editMode ? '<td style="white-space:nowrap"><button class="btn btn-orange btn-sm" onclick="finEditEntry(' + idx + ')" title="Edit">✏</button> <button class="btn btn-gray btn-sm" onclick="finDuplicateEntry(' + idx + ')" title="Add the same entry again with today\'s date">↻</button> <button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')" title="Delete">✕</button></td>' : '') +
         '</tr>';
     });
@@ -3537,7 +3580,7 @@ function finDuplicateEntry(idx) {
   if (!e) return;
   if (!confirm('Add the same ' + ({ income: 'income', expense: 'expense', maaser: 'מעשר', deposit: 'money-in', withdrawal: 'money-out' }[e.type] || '') + ' of ' + _money(parseFloat(e.amount) || 0) + (e.note ? ' (' + e.note + ')' : '') + ' again, dated today?')) return;
   const d = new Date();
-  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type: e.type, amount: parseFloat(e.amount) || 0, date: (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(), note: e.note || '', category: e.category || '' });
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type: e.type, amount: parseFloat(e.amount) || 0, date: (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(), note: e.note || '', category: e.category || '', payee: e.payee || '' });
   saveDB();
   renderFinance();
 }
@@ -3550,7 +3593,8 @@ function finAddEntry() {
   const date = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
   const note = document.getElementById('fin-note').value.trim();
   const cat = (document.getElementById('fin-cat') ? document.getElementById('fin-cat').value.trim() : '');
-  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type, amount: amt, date, note, category: cat });
+  const payee = (document.getElementById('fin-payee') ? document.getElementById('fin-payee').value.trim() : '');
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type, amount: amt, date, note, category: cat, payee: payee });
   logAction('settings', 'finance', (type === 'maaser' ? 'מעשר given ' : type + ' ') + _money(amt) + (note ? ' — ' + note : ''));
   saveDB();
   renderFinance();
@@ -3571,6 +3615,7 @@ function finEditEntry(idx) {
       '<div class="fg"><label>Amount (' + _curr() + ')</label><input id="fe-amt" type="number" step="0.01" value="' + (parseFloat(e.amount) || 0) + '"></div>' +
       '<div class="fg"><label>Date</label><input id="fe-date" type="date" value="' + esc(toISODate(e.date || '')) + '"></div>' +
       '<div class="fg"><label>Category</label><input id="fe-cat" type="text" list="fin-cat-list" value="' + esc(e.category || '') + '"></div>' +
+      '<div class="fg"><label>Paid to</label><input id="fe-payee" type="text" list="fin-payee-list" value="' + esc(e.payee || '') + '"></div>' +
       '<div class="fg" style="grid-column:1/-1"><label>Note</label><input id="fe-note" type="text" value="' + esc(e.note || '') + '"></div>' +
     '</div>' +
     '<div class="factions">' +
@@ -3590,6 +3635,8 @@ function finSaveEditEntry(idx) {
   const dr = document.getElementById('fe-date').value;
   if (dr) { const d = parseLocalDate(dr); e.date = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(); }
   e.category = document.getElementById('fe-cat').value.trim();
+  const _pv = document.getElementById('fe-payee');
+  if (_pv) e.payee = _pv.value.trim();
   e.note = document.getElementById('fe-note').value.trim();
   logAction('settings', 'finance', 'Edited finance entry (' + e.type + ' ' + _money(amt) + ')');
   closeOv('ov-charge');
@@ -3864,8 +3911,8 @@ function openFinanceYearReport(year) {
 /* ---- Finance CSV export ---- */
 function exportFinanceCSV() {
   _ensureFinance();
-  const rows = [['Date', 'Type', 'Amount', 'Category', 'Note']];
-  DB.finance.entries.forEach(e => rows.push([e.date || '', e.type || '', String(parseFloat(e.amount) || 0), e.category || '', e.note || '']));
+  const rows = [['Date', 'Type', 'Amount', 'Category', 'Paid to', 'Note']];
+  DB.finance.entries.forEach(e => rows.push([e.date || '', e.type || '', String(parseFloat(e.amount) || 0), e.category || '', e.payee || '', e.note || '']));
   const csv = rows.map(r => r.map(v => { let s = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; }).join(',')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -8206,7 +8253,7 @@ const _TOUR_STEPS = [
   { sec: 'power', emoji: '💵', title: 'Your money page', body: 'The <strong>מעשר & Finances</strong> tab is your whole bookkeeping in one place.<br><br>The big blue box at the top shows <strong>Cash on hand</strong> — everything that came in, minus everything that went out. Next to it: how much <strong>מעשר</strong> you still owe (or "✓ caught up").<br><br>Class money counts <strong>by itself</strong> — you never type it twice.', jumpTo: 'finance' },
   { sec: 'power', emoji: '➕', title: 'Adding money in or out', body: 'One simple form, five choices:<br><br>• <strong>💰 Other income</strong> — another job, babysitting (מעשר is counted on this)<br>• <strong>🧾 Expense</strong> — anything you paid for<br>• <strong>🤲 מעשר given</strong> — what you gave to tzedaka<br>• <strong>💵 Put money in</strong> — from savings or an already-tithed gift (NO מעשר counted — it\'s not new income)<br>• <strong>🏧 Take money out</strong> — moved to savings (not an expense)' },
   { sec: 'power', emoji: '🤲', title: 'מעשר made effortless', body: 'The app does the math: 10% מעשר or 20% חומש, on all income or income-minus-expenses — you choose once in settings.<br><br>When the red box shows money to give, one click on <strong>"Give it now"</strong> records it and you\'re caught up. It started counting from the day the tab was opened, so old money never created a debt.' },
-  { sec: 'power', emoji: '📮', title: 'Bills, budgets & goals', body: '• <strong>📮 Bills</strong> — Electric, water, rent with a due day. The tab shows "due in 3 days" or "⚠ overdue", and <strong>Mark paid</strong> records it in one click.<br>• <strong>🎯 Budgets</strong> — how much you want to spend per category; bars turn orange near the limit, red when over.<br>• <strong>🏦 Goals</strong> — saving up for something? Watch the bar fill.' },
+  { sec: 'power', emoji: '📮', title: 'Bills, budgets & goals', body: '• <strong>📮 Bills</strong> — Electric, water, rent with a due day. The tab shows "due in 3 days" or "⚠ overdue", and <strong>Mark paid</strong> records it in one click.<br>• <strong>🎯 Budgets</strong> — how much you want to spend per category; bars turn orange near the limit, red when over.<br>• <strong>🏦 Goals</strong> — saving up for something? Watch the bar fill.<br>• <strong>🧹 People you pay</strong> — the cleaning lady, taxes... type the name once in "Paid to" and you\'ll always see how much went to whom, with a one-click <strong>Pay again</strong>.' },
   { sec: 'power', emoji: '🔁', title: 'Things that repeat', body: 'Rent, a salary, tuition — set them up once in <strong>🔁 Auto-entries</strong> and they post themselves every month on the day you pick.<br><br>And the <strong>↻</strong> button next to any entry adds the same thing again, dated today — handy for repeat payments.' },
   { sec: 'power', emoji: '📆', title: 'Reports for your records', body: '• <strong>📊 Last 6 months</strong> chart — green bars are income, orange are spending<br>• <strong>📂 Where the money goes</strong> — totals per category<br>• <strong>📆 Yearly report</strong> — every month with מעשר owed vs given and a print button, ready for your records or your rav' },
 
