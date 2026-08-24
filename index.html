@@ -488,6 +488,41 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 .cf-mgr-row input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.88rem; }
 .cf-mgr-row select { padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem; }
 .cf-empty-hint { color: #888; font-style: italic; padding: 12px 0; text-align: center; font-size: 0.85rem; }
+
+/* ===== Finance tab design system ===== */
+.fx-hero { background: linear-gradient(135deg, #1a3a5c 0%, #2d6a9f 60%, #37839c 100%); border-radius: 14px; padding: 20px 22px; color: #fff; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; box-shadow: 0 4px 14px rgba(26,58,92,0.25); }
+.fx-hero .fxh-label { font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.75; }
+.fx-hero .fxh-amount { font-size: 2.1rem; font-weight: 800; line-height: 1.15; }
+.fx-hero .fxh-sub { font-size: 0.8rem; opacity: 0.8; margin-top: 2px; }
+.fx-maaser { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25); border-radius: 12px; padding: 12px 16px; text-align: center; min-width: 170px; }
+.fx-maaser .fxm-amt { font-size: 1.35rem; font-weight: 800; }
+.fx-maaser.ok .fxm-amt { color: #9fe3a9; }
+.fx-maaser.due .fxm-amt { color: #ffd9a0; }
+.fx-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.fx-chip { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 14px; font-size: 0.82rem; color: #556; display: flex; align-items: center; gap: 7px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.fx-chip strong { font-size: 0.95rem; color: #1a3a5c; }
+.fx-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 0; margin-bottom: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); overflow: hidden; }
+.fx-card > .fxc-head { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid #eef2f7; background: #fafcfe; }
+.fx-card > .fxc-head .fxc-ico { width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
+.fx-card > .fxc-head .fxc-title { font-weight: 700; color: #1a3a5c; font-size: 0.92rem; flex: 1; }
+.fx-card > .fxc-body { padding: 13px 16px; }
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.fx-grid .fx-card { margin-bottom: 0; }
+.fx-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #f2f6fa; flex-wrap: wrap; font-size: 0.88rem; }
+.fx-row:last-child { border-bottom: none; }
+.fx-track { background: #edf2f8; border-radius: 8px; height: 12px; overflow: hidden; }
+.fx-fill { height: 100%; border-radius: 8px; transition: width 0.4s; }
+.fx-pill { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.72rem; font-weight: 700; }
+.fx-pill.income { background: #e8f5e9; color: #2e7d32; }
+.fx-pill.expense { background: #fdeee2; color: #c05f22; }
+.fx-pill.maaser { background: #ede9f7; color: #6b46c1; }
+.fx-pill.deposit { background: #e3f0fa; color: #2d6a9f; }
+.fx-pill.withdrawal { background: #f0f0f0; color: #666; }
+.fx-toolbar { display: flex; gap: 7px; flex-wrap: wrap; }
+.fx-empty { text-align: center; padding: 30px 16px; color: #789; }
+.fx-empty .fxe-emoji { font-size: 2.2rem; display: block; margin-bottom: 8px; }
+body.density-compact .fx-hero { padding: 14px 16px; }
+@media (max-width: 640px) { .fx-hero .fxh-amount { font-size: 1.6rem; } .fx-grid { grid-template-columns: 1fr; } }
 </style>
 <style type="text/css" nonce="">
 .redacted {
@@ -3231,35 +3266,59 @@ function renderFinance() {
   const el = document.getElementById('finance-content');
   if (!el) return;
 
+  const _card = (ico, icoBg, title, headExtra, body) =>
+    '<div class="fx-card"><div class="fxc-head"><span class="fxc-ico" style="background:' + icoBg + '">' + ico + '</span>' +
+    '<span class="fxc-title">' + title + '</span>' + (headExtra || '') + '</div><div class="fxc-body">' + body + '</div></div>';
+
   let h = '';
-  // ---- headline cards ----
-  h += '<div class="sc-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
-    '<div class="sc ' + (s.cash >= 0 ? '' : 'r') + '"><div class="v">' + _money(s.cash) + '</div><div class="l">💵 Cash on hand</div></div>' +
-    '<div class="sc g"><div class="v">' + _money(s.gross) + '</div><div class="l">All income' + (c.includeClasses ? ' (incl. classes)' : '') + '</div></div>' +
-    '<div class="sc o"><div class="v">' + _money(s.expenses) + '</div><div class="l">Expenses</div></div>' +
-    '<div class="sc"><div class="v">' + _money(s.owedTotal) + '</div><div class="l">מעשר owed (' + c.maaserRate + '% of ' + (c.base === 'net' ? 'net' : 'gross') + ')</div></div>' +
-    '<div class="sc g"><div class="v">' + _money(s.maaserGiven) + '</div><div class="l">מעשר given</div></div>' +
-    '<div class="sc ' + (s.owedLeft > 0.005 ? 'r' : 'g') + '"><div class="v">' + _money(Math.max(0, s.owedLeft)) + '</div><div class="l">' + (s.owedLeft > 0.005 ? 'מעשר still to give' : 'All caught up ✓') + '</div>' +
-      (editMode && s.owedLeft > 0.005 ? '<button class="btn btn-green btn-sm" style="margin-top:6px" onclick="finGiveMaaserNow()">🤲 Give it now</button>' : '') + '</div>' +
+  // ---- HERO: cash on hand + מעשר status ----
+  h += '<div class="fx-hero">' +
+    '<div><div class="fxh-label">💵 Cash on hand</div>' +
+      '<div class="fxh-amount">' + _money(s.cash) + '</div>' +
+      '<div class="fxh-sub">everything in, minus everything out</div></div>' +
+    '<div class="fx-maaser ' + (s.owedLeft > 0.005 ? 'due' : 'ok') + '">' +
+      '<div style="font-size:0.75rem;opacity:0.85">🤲 מעשר</div>' +
+      '<div class="fxm-amt">' + (s.owedLeft > 0.005 ? _money(s.owedLeft) : '✓ caught up') + '</div>' +
+      '<div style="font-size:0.72rem;opacity:0.8">' + (s.owedLeft > 0.005 ? 'still to give' : 'nothing owed') + '</div>' +
+      (editMode && s.owedLeft > 0.005 ? '<button class="btn btn-green btn-sm" style="margin-top:7px" onclick="finGiveMaaserNow()">Give it now</button>' : '') +
+    '</div>' +
   '</div>';
 
-  // ---- this month vs last month tiles ----
+  // ---- stat chips ----
+  h += '<div class="fx-chips">' +
+    '<span class="fx-chip">💰 All income <strong>' + _money(s.gross) + '</strong></span>' +
+    '<span class="fx-chip">🧾 Expenses <strong>' + _money(s.expenses) + '</strong></span>' +
+    '<span class="fx-chip">🤲 מעשר owed <strong>' + _money(s.owedTotal) + '</strong> <span style="color:#99a">(' + c.maaserRate + '% of ' + (c.base === 'net' ? 'net' : 'gross') + ')</span></span>' +
+    '<span class="fx-chip">✓ given <strong>' + _money(s.maaserGiven) + '</strong></span>' +
+    (c.includeClasses ? '<span class="fx-chip" title="Counted automatically from the Payments tab">🏋️ from classes <strong>' + _money(s.classIncome) + '</strong> <span style="color:#99a">auto</span></span>' : '') +
+  '</div>';
+
+  // ---- friendly first-time welcome ----
+  if (!DB.finance.entries.length && !DB.finance.bills.length && !DB.finance.budgets.length && !DB.finance.goals.length) {
+    h += _card('👋', '#e3f0fa', 'Welcome to your money page', '',
+      '<p style="font-size:0.9rem;color:#456;margin-bottom:10px">Class money is already counted for you, automatically. Three nice ways to start:</p>' +
+      '<div class="fx-row">💰 <span style="flex:1">Got other income — a job, babysitting, a gift? Add it below and מעשר is worked out for you.</span></div>' +
+      '<div class="fx-row">📮 <span style="flex:1">Add your monthly <strong>Bills</strong> and the app reminds you what\'s due — one click marks them paid.</span></div>' +
+      '<div class="fx-row">🏦 <span style="flex:1">Saving up for something? Make a <strong>Goal</strong> and watch the bar fill up.</span></div>');
+  }
+
+  // ---- this month ----
   (function () {
     const now = new Date();
     const tm = _finMonth(_monthKey(now));
     const lm = _finMonth(_monthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
     const net = tm.inc - tm.exp;
     const trendPct = lm.inc ? Math.round(((tm.inc - lm.inc) / lm.inc) * 100) : null;
-    h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
-      '<strong style="display:block;margin-bottom:8px;font-size:0.9rem">📅 ' + now.toLocaleString('default', { month: 'long' }) + '</strong>' +
-      '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-        '<div class="sc g"><div class="v">' + _money(tm.inc) + '</div><div class="l">Income this month' + (trendPct !== null ? ' (' + (trendPct >= 0 ? '+' : '') + trendPct + '% vs last)' : '') + '</div></div>' +
-        '<div class="sc o"><div class="v">' + _money(tm.exp) + '</div><div class="l">Spent this month</div></div>' +
-        '<div class="sc ' + (net >= 0 ? 'g' : 'r') + '"><div class="v">' + _money(net) + '</div><div class="l">' + (net >= 0 ? 'Left over (net)' : 'Overspent') + '</div></div>' +
-      '</div></div>';
+    h += _card('📅', '#e8f5e9', now.toLocaleString('default', { month: 'long', year: 'numeric' }), '',
+      '<div class="fx-chips" style="margin-bottom:0">' +
+        '<span class="fx-chip">came in <strong style="color:#2e7d32">' + _money(tm.inc) + '</strong>' + (trendPct !== null ? ' <span style="color:' + (trendPct >= 0 ? '#2e7d32' : '#c0392b') + '">' + (trendPct >= 0 ? '▲' : '▼') + Math.abs(trendPct) + '%</span>' : '') + '</span>' +
+        '<span class="fx-chip">went out <strong style="color:#c05f22">' + _money(tm.exp) + '</strong></span>' +
+        '<span class="fx-chip">' + (net >= 0 ? 'left over <strong style="color:#2e7d32">' + _money(net) + '</strong>' : 'overspent <strong style="color:#c0392b">' + _money(-net) + '</strong>') + '</span>' +
+      '</div>');
   })();
 
-  // ---- bills due strip ----
+  // ---- bills / budgets / goals grid ----
+  let gridCards = '';
   (function () {
     if (!DB.finance.bills.length) return;
     const now = new Date();
@@ -3270,60 +3329,52 @@ function renderFinance() {
       const days = (parseInt(b.dueDay) || 1) - today;
       return { b, i, paid, days };
     }).sort((a, x) => (a.paid - x.paid) || (a.days - x.days));
-    h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
-      '<strong style="display:block;margin-bottom:8px;font-size:0.9rem">📮 Bills this month</strong>';
+    let body = '';
     rows.forEach(r => {
-      const st = r.paid ? '<span style="color:#2e7d32;font-weight:700">✓ Paid</span>'
-        : r.days < 0 ? '<span style="color:#c0392b;font-weight:700">⚠ ' + (-r.days) + ' day(s) overdue</span>'
-        : r.days === 0 ? '<span style="color:#e67e22;font-weight:700">Due today</span>'
-        : '<span style="color:#888">due in ' + r.days + ' day(s)</span>';
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f0f4f8;flex-wrap:wrap">' +
-        '<span style="flex:1;min-width:120px"><strong>' + _esc(r.b.name) + '</strong> — ' + _money(parseFloat(r.b.amount) || 0) + ' (day ' + (r.b.dueDay || 1) + ')</span>' + st +
-        (editMode && !r.paid ? ' <button class="btn btn-green btn-sm" onclick="finPayBill(' + r.i + ')">💳 Mark paid</button>' : '') +
-      '</div>';
+      const st = r.paid ? '<span class="fx-pill income">✓ Paid</span>'
+        : r.days < 0 ? '<span class="fx-pill" style="background:#fdecea;color:#c0392b">⚠ ' + (-r.days) + 'd overdue</span>'
+        : r.days === 0 ? '<span class="fx-pill expense">Due today</span>'
+        : '<span class="fx-pill withdrawal">in ' + r.days + 'd</span>';
+      body += '<div class="fx-row"><span style="flex:1;min-width:110px"><strong>' + _esc(r.b.name) + '</strong><br><span style="color:#889;font-size:0.78rem">' + _money(parseFloat(r.b.amount) || 0) + ' · day ' + (r.b.dueDay || 1) + '</span></span>' + st +
+        (editMode && !r.paid ? ' <button class="btn btn-green btn-sm" onclick="finPayBill(' + r.i + ')">Mark paid</button>' : '') + '</div>';
     });
-    h += '</div>';
+    gridCards += _card('📮', '#fdeee2', 'Bills', (editMode ? '<button class="btn btn-gray btn-sm" onclick="openFinBills()">＋ manage</button>' : ''), body);
   })();
-
-  // ---- budgets ----
   (function () {
     if (!DB.finance.budgets.length) return;
     const key = _monthKey();
-    h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
-      '<strong style="display:block;margin-bottom:8px;font-size:0.9rem">🎯 Budgets — ' + new Date().toLocaleString('default', { month: 'long' }) + '</strong>';
+    let body = '';
     DB.finance.budgets.forEach(bu => {
       const spent = _finSpentInCat(bu.cat, key);
       const lim = parseFloat(bu.monthly) || 0;
       const pct = lim ? Math.min(100, Math.round(spent / lim * 100)) : 0;
       const over = spent > lim;
-      h += '<div style="margin-bottom:8px">' +
-        '<div style="display:flex;justify-content:space-between;font-size:0.84rem;margin-bottom:2px"><span><strong>' + _esc(bu.cat) + '</strong></span>' +
-        '<span style="' + (over ? 'color:#c0392b;font-weight:700' : 'color:#555') + '">' + _money(spent) + ' / ' + _money(lim) + (over ? ' — over budget!' : '') + '</span></div>' +
-        '<div style="background:#eef2f7;border-radius:6px;height:10px;overflow:hidden"><div style="height:100%;border-radius:6px;width:' + pct + '%;background:' + (over ? '#c0392b' : (pct > 80 ? '#e67e22' : '#4a8c4a')) + '"></div></div>' +
+      body += '<div style="margin-bottom:10px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:0.84rem;margin-bottom:3px"><strong>' + _esc(bu.cat) + '</strong>' +
+        '<span style="' + (over ? 'color:#c0392b;font-weight:700' : 'color:#667') + '">' + _money(spent) + ' / ' + _money(lim) + (over ? ' — over!' : '') + '</span></div>' +
+        '<div class="fx-track"><div class="fx-fill" style="width:' + pct + '%;background:' + (over ? '#c0392b' : (pct > 80 ? '#e67e22' : '#4a8c4a')) + '"></div></div>' +
       '</div>';
     });
-    h += '</div>';
+    gridCards += _card('🎯', '#e8f5e9', 'Budgets · ' + new Date().toLocaleString('default', { month: 'long' }), (editMode ? '<button class="btn btn-gray btn-sm" onclick="openFinBudgets()">＋ manage</button>' : ''), body);
   })();
-
-  // ---- savings goals ----
   (function () {
     if (!DB.finance.goals.length) return;
-    h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px">' +
-      '<strong style="display:block;margin-bottom:8px;font-size:0.9rem">🏦 Savings goals</strong>';
+    let body = '';
     DB.finance.goals.forEach((g, i) => {
       const saved = parseFloat(g.saved) || 0, target = parseFloat(g.target) || 1;
       const pct = Math.min(100, Math.round(saved / target * 100));
-      h += '<div style="margin-bottom:10px">' +
-        '<div style="display:flex;justify-content:space-between;font-size:0.84rem;margin-bottom:2px;flex-wrap:wrap;gap:4px"><span><strong>' + _esc(g.name) + '</strong></span>' +
-        '<span style="color:#555">' + _money(saved) + ' of ' + _money(target) + ' (' + pct + '%)' + (pct >= 100 ? ' 🎉' : '') + '</span></div>' +
-        '<div style="background:#eef2f7;border-radius:6px;height:12px;overflow:hidden"><div style="height:100%;border-radius:6px;width:' + pct + '%;background:#2d6a9f"></div></div>' +
-        (editMode ? '<div style="margin-top:4px"><button class="btn btn-green btn-sm" onclick="finAddToGoal(' + i + ')">➕ Add money</button> <button class="btn btn-red btn-sm" onclick="finDeleteGoal(' + i + ')">✕</button></div>' : '') +
+      body += '<div style="margin-bottom:12px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:0.84rem;margin-bottom:3px;flex-wrap:wrap;gap:4px"><strong>' + _esc(g.name) + (pct >= 100 ? ' 🎉' : '') + '</strong>' +
+        '<span style="color:#667">' + _money(saved) + ' of ' + _money(target) + ' · ' + pct + '%</span></div>' +
+        '<div class="fx-track" style="height:14px"><div class="fx-fill" style="width:' + pct + '%;background:linear-gradient(90deg,#2d6a9f,#37839c)"></div></div>' +
+        (editMode ? '<div style="margin-top:5px"><button class="btn btn-green btn-sm" onclick="finAddToGoal(' + i + ')">➕ Add money</button> <button class="btn btn-red btn-sm" onclick="finDeleteGoal(' + i + ')">✕</button></div>' : '') +
       '</div>';
     });
-    h += '</div>';
+    gridCards += _card('🏦', '#e3f0fa', 'Savings goals', (editMode ? '<button class="btn btn-gray btn-sm" onclick="openFinGoals()">＋ manage</button>' : ''), body);
   })();
+  if (gridCards) h += '<div class="fx-grid">' + gridCards + '</div>';
 
-  // ---- 6-month trend (simple CSS bars: green income, orange expenses) ----
+  // ---- 6-month trend ----
   (function () {
     const now = new Date();
     const cols = [];
@@ -3349,19 +3400,19 @@ function renderFinance() {
       maxV = Math.max(maxV, inc, exp);
       cols.push({ label: d.toLocaleString('default', { month: 'short' }), inc, exp });
     }
-    if (cols.some(c => c.inc || c.exp)) {
-      h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:14px;margin-bottom:14px">' +
-        '<strong style="display:block;margin-bottom:10px;font-size:0.9rem">📊 Last 6 months — <span style="color:#2e7d32">income</span> vs <span style="color:#e67e22">expenses</span></strong>' +
-        '<div style="display:flex;gap:12px;align-items:flex-end;height:110px">' +
-        cols.map(c =>
+    if (cols.some(x => x.inc || x.exp)) {
+      const body = '<div style="display:flex;gap:12px;align-items:flex-end;height:120px">' +
+        cols.map(x =>
           '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end">' +
-            '<div style="display:flex;gap:3px;align-items:flex-end;width:100%;height:80px;justify-content:center">' +
-              '<div title="Income ' + _money(c.inc) + '" style="width:38%;background:#4a8c4a;border-radius:3px 3px 0 0;height:' + Math.max(2, Math.round(c.inc / maxV * 80)) + 'px"></div>' +
-              '<div title="Expenses ' + _money(c.exp) + '" style="width:38%;background:#e67e22;border-radius:3px 3px 0 0;height:' + Math.max(2, Math.round(c.exp / maxV * 80)) + 'px"></div>' +
+            '<div style="display:flex;gap:3px;align-items:flex-end;width:100%;height:88px;justify-content:center">' +
+              '<div title="Income ' + _money(x.inc) + '" style="width:38%;background:linear-gradient(180deg,#5aa85a,#3d7a3d);border-radius:4px 4px 0 0;height:' + Math.max(3, Math.round(x.inc / maxV * 88)) + 'px"></div>' +
+              '<div title="Expenses ' + _money(x.exp) + '" style="width:38%;background:linear-gradient(180deg,#f0964a,#d3701f);border-radius:4px 4px 0 0;height:' + Math.max(3, Math.round(x.exp / maxV * 88)) + 'px"></div>' +
             '</div>' +
-            '<span style="font-size:0.7rem;color:#888">' + c.label + '</span>' +
+            '<span style="font-size:0.72rem;color:#889;font-weight:600">' + x.label + '</span>' +
           '</div>').join('') +
-        '</div></div>';
+        '</div>' +
+        '<div style="display:flex;gap:14px;margin-top:8px;font-size:0.76rem;color:#667"><span><span style="display:inline-block;width:10px;height:10px;background:#4a8c4a;border-radius:2px;margin-right:4px"></span>income</span><span><span style="display:inline-block;width:10px;height:10px;background:#e67e22;border-radius:2px;margin-right:4px"></span>expenses</span></div>';
+      h += _card('📊', '#ede9f7', 'Last 6 months', '', body);
     }
   })();
 
@@ -3370,23 +3421,22 @@ function renderFinance() {
     const byCat = {};
     DB.finance.entries.forEach(e => {
       const cat = (e.category || 'Uncategorized');
-      if (!byCat[cat]) byCat[cat] = { income: 0, expense: 0, maaser: 0 };
       if (e.type !== 'income' && e.type !== 'expense' && e.type !== 'maaser') return; // deposits/withdrawals aren't income or spending
+      if (!byCat[cat]) byCat[cat] = { income: 0, expense: 0, maaser: 0 };
       byCat[cat][e.type] += parseFloat(e.amount) || 0;
     });
     const cats = Object.keys(byCat).sort();
     if (cats.length) {
-      h += '<details style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px"><summary style="cursor:pointer;font-weight:700">📂 By category</summary>' +
-        '<div class="tw"><table style="margin-top:8px"><thead><tr><th>Category</th><th>Income</th><th>Expenses</th><th>מעשר given</th></tr></thead><tbody>' +
-        cats.map(c => '<tr><td><strong>' + _esc(c) + '</strong></td><td>' + _money(byCat[c].income) + '</td><td>' + _money(byCat[c].expense) + '</td><td>' + _money(byCat[c].maaser) + '</td></tr>').join('') +
-        '</tbody></table></div></details>';
+      h += '<details class="fx-card" style="padding:0"><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:12px 16px;font-size:0.92rem">📂 Where the money goes (by category)</summary>' +
+        '<div class="fxc-body" style="padding-top:0"><div class="tw"><table style="margin-top:4px"><thead><tr><th>Category</th><th>Income</th><th>Expenses</th><th>מעשר given</th></tr></thead><tbody>' +
+        cats.map(x => '<tr><td><strong>' + _esc(x) + '</strong></td><td>' + _money(byCat[x].income) + '</td><td>' + _money(byCat[x].expense) + '</td><td>' + _money(byCat[x].maaser) + '</td></tr>').join('') +
+        '</tbody></table></div></div></details>';
     }
   })();
 
   // ---- quick add ----
   if (editMode) {
-    h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:14px;margin-bottom:14px">' +
-      '<strong style="display:block;margin-bottom:8px">➕ Add an entry</strong>' +
+    h += _card('➕', '#e8f5e9', 'Add an entry', '',
       '<div class="fgrid">' +
         '<div class="fg"><label>Type</label><select id="fin-type">' +
           '<option value="income">💰 Other income (not classes)</option>' +
@@ -3400,21 +3450,22 @@ function renderFinance() {
         '<div class="fg"><label>Category</label><input id="fin-cat" type="text" list="fin-cat-list" placeholder="e.g. Other job / Rent"><datalist id="fin-cat-list">' + _FIN_CATS.map(x => '<option value="' + esc(x) + '">').join('') + '</datalist></div>' +
         '<div class="fg"><label>Note</label><input id="fin-note" type="text" placeholder="e.g. babysitting / rent / to Tomchei Shabbos"></div>' +
       '</div>' +
-      '<div style="margin-top:8px"><button class="btn btn-green" onclick="finAddEntry()">➕ Add</button> ' +
-      '<button class="btn btn-blue" onclick="openFinRecurring()">🔁 Monthly auto-entries</button> ' +
-      '<button class="btn btn-blue" onclick="openFinBills()">📮 Bills</button> ' +
-      '<button class="btn btn-blue" onclick="openFinBudgets()">🎯 Budgets</button> ' +
-      '<button class="btn btn-blue" onclick="openFinGoals()">🏦 Goals</button> ' +
-      '<button class="btn btn-gray" onclick="openFinanceYearReport()">📆 Yearly report</button> ' +
-      '<button class="btn btn-gray" onclick="exportFinanceCSV()">📊 Export CSV</button></div>' +
-    '</div>';
+      '<div class="fx-toolbar" style="margin-top:10px">' +
+        '<button class="btn btn-green" onclick="finAddEntry()">➕ Add</button>' +
+        '<button class="btn btn-blue" onclick="openFinRecurring()">🔁 Auto-entries</button>' +
+        '<button class="btn btn-blue" onclick="openFinBills()">📮 Bills</button>' +
+        '<button class="btn btn-blue" onclick="openFinBudgets()">🎯 Budgets</button>' +
+        '<button class="btn btn-blue" onclick="openFinGoals()">🏦 Goals</button>' +
+        '<button class="btn btn-gray" onclick="openFinanceYearReport()">📆 Yearly report</button>' +
+        '<button class="btn btn-gray" onclick="exportFinanceCSV()">📊 CSV</button>' +
+      '</div>');
   } else {
     h += '<div style="margin-bottom:14px"><button class="btn btn-gray" onclick="openFinanceYearReport()">📆 Yearly report</button></div>';
   }
 
   // ---- settings ----
-  h += '<details style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px"><summary style="cursor:pointer;font-weight:700">⚙ מעשר settings</summary>' +
-    '<div class="fgrid" style="margin-top:10px">' +
+  h += '<details class="fx-card" style="padding:0"><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:12px 16px;font-size:0.92rem">⚙ מעשר settings</summary>' +
+    '<div class="fgrid" style="margin:0 16px 12px">' +
       '<div class="fg"><label>Rate</label><select id="fin-rate" onchange="finSetCfg()">' +
         '<option value="10"' + (c.maaserRate === 10 ? ' selected' : '') + '>מעשר — 10%</option>' +
         '<option value="20"' + (c.maaserRate === 20 ? ' selected' : '') + '>חומש — 20%</option>' +
@@ -3431,13 +3482,14 @@ function renderFinance() {
       '</select></div>' +
       '<div class="fg"><label>Only count classes from <span class="hint">(blank = all time)</span></label><input id="fin-classesfrom" type="date" value="' + esc(c.classesFrom || '') + '" onchange="finSetCfg()"></div>' +
     '</div>' +
-    '<p style="font-size:0.78rem;color:#888;margin-top:8px">Class income (' + _money(s.classIncome) + ') is read automatically from the Payments tab — no need to enter it again. Ask your rav which calculation applies to you; this is bookkeeping, not a psak.</p>' +
+    '<p style="font-size:0.78rem;color:#888;margin:0 16px 12px">Class income (' + _money(s.classIncome) + ') is read automatically from the Payments tab — no need to enter it again. Ask your rav which calculation applies to you; this is bookkeeping, not a psak.</p>' +
   '</details>';
 
   // ---- filters + entries table ----
   const allEntries = DB.finance.entries.slice().sort((a, b) => (_dateToYMD(b.date) || '').localeCompare(_dateToYMD(a.date) || ''));
   const monthsSeen = [...new Set(allEntries.map(e => (_dateToYMD(e.date) || '').slice(0, 7)).filter(Boolean))].sort().reverse();
   const catsSeen = [...new Set(allEntries.map(e => e.category || '').filter(Boolean))].sort();
+  h += '<div style="font-weight:700;color:#1a3a5c;margin:4px 0 8px;font-size:0.92rem">📒 The ledger — every entry (' + allEntries.length + ')</div>';
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">' +
     '<input id="ff-q" type="text" placeholder="🔍 Search notes..." value="' + esc(_finFilter.q) + '" oninput="finSetFilter()" style="flex:1;min-width:140px">' +
     '<select id="ff-month" onchange="finSetFilter()"><option value="">All months</option>' + monthsSeen.map(mk => '<option value="' + mk + '"' + (_finFilter.month === mk ? ' selected' : '') + '>' + new Date(+mk.slice(0, 4), +mk.slice(5, 7) - 1, 1).toLocaleString('default', { month: 'short', year: 'numeric' }) + '</option>').join('') + '</select>' +
@@ -3466,17 +3518,28 @@ function renderFinance() {
   } else {
     entries.forEach(e => {
       const idx = DB.finance.entries.indexOf(e);
-      const tl = { income: '💰 Income', expense: '🧾 Expense', maaser: '🤲 מעשר', deposit: '💵 Money in', withdrawal: '🏧 Money out' }[e.type] || e.type;
-      h += '<tr><td>' + _esc(e.date || '') + '</td><td>' + tl + '</td>' +
+      const pill = { income: '<span class="fx-pill income">💰 Income</span>', expense: '<span class="fx-pill expense">🧾 Expense</span>', maaser: '<span class="fx-pill maaser">🤲 מעשר</span>', deposit: '<span class="fx-pill deposit">💵 Money in</span>', withdrawal: '<span class="fx-pill withdrawal">🏧 Money out</span>' }[e.type] || _esc(e.type);
+      h += '<tr><td style="white-space:nowrap">' + _esc(e.date || '') + '</td><td>' + pill + '</td>' +
         '<td><strong>' + _money(parseFloat(e.amount) || 0) + '</strong></td>' +
         '<td style="font-size:0.82rem">' + _esc(e.category || '—') + '</td>' +
         '<td>' + _esc(e.note || '') + '</td>' +
-        (editMode ? '<td style="white-space:nowrap"><button class="btn btn-orange btn-sm" onclick="finEditEntry(' + idx + ')" title="Edit">✏</button> <button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')" title="Delete">✕</button></td>' : '') +
+        (editMode ? '<td style="white-space:nowrap"><button class="btn btn-orange btn-sm" onclick="finEditEntry(' + idx + ')" title="Edit">✏</button> <button class="btn btn-gray btn-sm" onclick="finDuplicateEntry(' + idx + ')" title="Add the same entry again with today\'s date">↻</button> <button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')" title="Delete">✕</button></td>' : '') +
         '</tr>';
     });
   }
   h += '</tbody></table></div>';
   el.innerHTML = h;
+}
+// ↻ Repeat an entry with today's date — for things paid again (same rent, same donation).
+function finDuplicateEntry(idx) {
+  _ensureFinance();
+  const e = DB.finance.entries[idx];
+  if (!e) return;
+  if (!confirm('Add the same ' + ({ income: 'income', expense: 'expense', maaser: 'מעשר', deposit: 'money-in', withdrawal: 'money-out' }[e.type] || '') + ' of ' + _money(parseFloat(e.amount) || 0) + (e.note ? ' (' + e.note + ')' : '') + ' again, dated today?')) return;
+  const d = new Date();
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type: e.type, amount: parseFloat(e.amount) || 0, date: (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear(), note: e.note || '', category: e.category || '' });
+  saveDB();
+  renderFinance();
 }
 function finAddEntry() {
   _ensureFinance();
@@ -8140,9 +8203,12 @@ const _TOUR_STEPS = [
   { sec: 'daily-workflow', emoji: '✏️', title: 'Fix a payment mistake', body: 'Typed $50 instead of $15? On the <strong>Payments</strong> tab, click the ✏ next to any payment to change the amount, date, or method. The member\'s balance corrects itself automatically.', jumpTo: 'payments' },
 
   // --- Money / finances ---
-  { sec: 'power', emoji: '💵', title: 'מעשר & Finances', body: 'A full bookkeeping tab! Class income counts <strong>automatically</strong> — you never type it twice. Add any other income (another job, babysitting), expenses, and מעשר you gave.<br><br>It always shows exactly how much מעשר you still owe. Choose 10% מעשר or 20% חומש, from gross or net — it starts counting from today, so you begin at $0.', jumpTo: 'finance' },
-  { sec: 'power', emoji: '🔁', title: 'Monthly auto-entries', body: 'Rent, a salary, tuition — things that repeat every month can post themselves. In the Finances tab click <strong>🔁 Monthly auto-entries</strong>, set the amount and day of the month, and forget about it.' },
-  { sec: 'power', emoji: '📆', title: 'Yearly report', body: 'One click in the Finances tab: every month of the year — class income, other income, expenses, מעשר owed and given — with a bottom line telling you if you\'re caught up. Print-friendly for your records.' },
+  { sec: 'power', emoji: '💵', title: 'Your money page', body: 'The <strong>מעשר & Finances</strong> tab is your whole bookkeeping in one place.<br><br>The big blue box at the top shows <strong>Cash on hand</strong> — everything that came in, minus everything that went out. Next to it: how much <strong>מעשר</strong> you still owe (or "✓ caught up").<br><br>Class money counts <strong>by itself</strong> — you never type it twice.', jumpTo: 'finance' },
+  { sec: 'power', emoji: '➕', title: 'Adding money in or out', body: 'One simple form, five choices:<br><br>• <strong>💰 Other income</strong> — another job, babysitting (מעשר is counted on this)<br>• <strong>🧾 Expense</strong> — anything you paid for<br>• <strong>🤲 מעשר given</strong> — what you gave to tzedaka<br>• <strong>💵 Put money in</strong> — from savings or an already-tithed gift (NO מעשר counted — it\'s not new income)<br>• <strong>🏧 Take money out</strong> — moved to savings (not an expense)' },
+  { sec: 'power', emoji: '🤲', title: 'מעשר made effortless', body: 'The app does the math: 10% מעשר or 20% חומש, on all income or income-minus-expenses — you choose once in settings.<br><br>When the red box shows money to give, one click on <strong>"Give it now"</strong> records it and you\'re caught up. It started counting from the day the tab was opened, so old money never created a debt.' },
+  { sec: 'power', emoji: '📮', title: 'Bills, budgets & goals', body: '• <strong>📮 Bills</strong> — Electric, water, rent with a due day. The tab shows "due in 3 days" or "⚠ overdue", and <strong>Mark paid</strong> records it in one click.<br>• <strong>🎯 Budgets</strong> — how much you want to spend per category; bars turn orange near the limit, red when over.<br>• <strong>🏦 Goals</strong> — saving up for something? Watch the bar fill.' },
+  { sec: 'power', emoji: '🔁', title: 'Things that repeat', body: 'Rent, a salary, tuition — set them up once in <strong>🔁 Auto-entries</strong> and they post themselves every month on the day you pick.<br><br>And the <strong>↻</strong> button next to any entry adds the same thing again, dated today — handy for repeat payments.' },
+  { sec: 'power', emoji: '📆', title: 'Reports for your records', body: '• <strong>📊 Last 6 months</strong> chart — green bars are income, orange are spending<br>• <strong>📂 Where the money goes</strong> — totals per category<br>• <strong>📆 Yearly report</strong> — every month with מעשר owed vs given and a print button, ready for your records or your rav' },
 
   // --- Cleanup & control ---
   { sec: 'customization', emoji: '🧹', title: 'Fix My Numbers', body: 'Totals look wrong? <strong>⚙ Menu → 🧹 Fix My Numbers</strong> finds "ghost" money — leftover data from deleted members — and unusually large amounts, and removes them safely.<br><br>This is the tool to reach for when something doesn\'t add up.' },
