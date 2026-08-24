@@ -520,6 +520,9 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
         <button class="menu-item" onclick="openDataCleanup();toggleMenu()">🧹 Fix My Numbers (Cleanup)</button>
         <button class="menu-item" onclick="openTrash();toggleMenu()">♻ Recycle Bin</button>
         <button class="menu-item" onclick="openRepairTotals();toggleMenu()">🩺 Check &amp; Repair Totals</button>
+        <button class="menu-item" onclick="openMergeMembers();toggleMenu()">🔀 Merge Duplicates</button>
+        <button class="menu-item" onclick="openMonthlySummary();toggleMenu()">📅 This Month at a Glance</button>
+        <button class="menu-item" onclick="openUndoHistory();toggleMenu()">⏪ Change History</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
       </div>
@@ -545,6 +548,7 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
   <button data-tab="groups">🗂 Groups</button>
   <button data-tab="notes">📝 Notes</button>
   <button data-tab="reports" data-min-level="standard">📈 Reports</button>
+  <button data-tab="finance">💵 מעשר &amp; Finances</button>
   <button data-tab="log" data-min-level="pro">📜 Log</button>
   <span class="spacer"></span>
   <button data-tab="paused" class="corner-btn">⏸ Paused</button>
@@ -721,6 +725,12 @@ body.theme-custom h1, body.theme-custom h2, body.theme-custom h3, body.theme-cus
 <div id="tab-reports" class="tab">
   <div class="notice">📈 Insights from your data. All numbers update automatically.</div>
   <div id="reports-content"></div>
+</div>
+
+<!-- מעשר & FINANCES -->
+<div id="tab-finance" class="tab">
+  <div class="notice">💵 מעשר and household finances — income from classes flows in automatically; add any other income or expenses.</div>
+  <div id="finance-content"></div>
 </div>
 
 <!-- SETTINGS (v19) -->
@@ -1633,6 +1643,7 @@ function showTab(id) {
   if (id === 'settings') renderSettings();
   if (id === 'reports') renderReports();
   if (id === 'advanced') renderAdvanced();
+  if (id === 'finance') renderFinance();
 }
 document.querySelectorAll('#mainnav button').forEach(btn => {
   btn.addEventListener('click', function() { showTab(this.getAttribute('data-tab')); });
@@ -3060,6 +3071,173 @@ function confirmDeleteMemberParts(name) {
     (_isCloudSyncActive() ? '\n\nThe change will sync to your other devices.' : ''));
 }
 
+/* ============ מעשר & FINANCES ============
+   DB.finance = {
+     entries: [{id, type:'income'|'expense'|'maaser', amount, date:'M/D/YYYY', note, category}],
+     cfg: { maaserRate: 10|20|custom, base:'gross'|'net', includeClasses:true,
+            classesFrom:'YYYY-MM-DD' (count class income from this date) }
+   }
+   Class income comes straight from DB.payments (no double entry). Everything else is
+   manually added. מעשר owed = base × rate − maaser given. */
+function _ensureFinance() {
+  if (!DB.finance) DB.finance = {};
+  if (!Array.isArray(DB.finance.entries)) DB.finance.entries = [];
+  if (!DB.finance.cfg) DB.finance.cfg = {};
+  const c = DB.finance.cfg;
+  if (typeof c.maaserRate !== 'number') c.maaserRate = 10;
+  if (c.base !== 'net' && c.base !== 'gross') c.base = 'gross';
+  if (typeof c.includeClasses !== 'boolean') c.includeClasses = true;
+  if (typeof c.classesFrom !== 'string') c.classesFrom = '';
+}
+function _finClassIncome() {
+  _ensureFinance();
+  const c = DB.finance.cfg;
+  if (!c.includeClasses) return 0;
+  let sum = 0;
+  (DB.payments || []).forEach(p => {
+    const amt = parseFloat(p.paid) || 0;
+    if (!amt) return;
+    if (c.classesFrom) {
+      const ymd = _dateToYMD(p.date);
+      if (ymd && ymd < c.classesFrom) return;
+    }
+    sum += amt;
+  });
+  return sum;
+}
+function _finSums() {
+  _ensureFinance();
+  let otherIncome = 0, expenses = 0, maaserGiven = 0;
+  DB.finance.entries.forEach(e => {
+    const a = parseFloat(e.amount) || 0;
+    if (e.type === 'income') otherIncome += a;
+    else if (e.type === 'expense') expenses += a;
+    else if (e.type === 'maaser') maaserGiven += a;
+  });
+  const classIncome = _finClassIncome();
+  const gross = classIncome + otherIncome;
+  const c = DB.finance.cfg;
+  const base = c.base === 'net' ? Math.max(0, gross - expenses) : gross;
+  const owedTotal = base * (c.maaserRate / 100);
+  return { classIncome, otherIncome, expenses, maaserGiven, gross, base, owedTotal, owedLeft: owedTotal - maaserGiven };
+}
+function renderFinance() {
+  _ensureFinance();
+  const s = _finSums();
+  const c = DB.finance.cfg;
+  const el = document.getElementById('finance-content');
+  if (!el) return;
+
+  let h = '';
+  // ---- headline cards ----
+  h += '<div class="sc-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+    '<div class="sc g"><div class="v">' + _money(s.gross) + '</div><div class="l">All income' + (c.includeClasses ? ' (incl. classes)' : '') + '</div></div>' +
+    '<div class="sc o"><div class="v">' + _money(s.expenses) + '</div><div class="l">Expenses</div></div>' +
+    '<div class="sc"><div class="v">' + _money(s.owedTotal) + '</div><div class="l">מעשר owed (' + c.maaserRate + '% of ' + (c.base === 'net' ? 'net' : 'gross') + ')</div></div>' +
+    '<div class="sc g"><div class="v">' + _money(s.maaserGiven) + '</div><div class="l">מעשר given</div></div>' +
+    '<div class="sc ' + (s.owedLeft > 0.005 ? 'r' : 'g') + '"><div class="v">' + _money(Math.max(0, s.owedLeft)) + '</div><div class="l">' + (s.owedLeft > 0.005 ? 'מעשר still to give' : 'All caught up ✓') + '</div></div>' +
+  '</div>';
+
+  // ---- quick add ----
+  if (editMode) {
+    h += '<div style="background:#fff;border:1px solid #dde;border-radius:10px;padding:14px;margin-bottom:14px">' +
+      '<strong style="display:block;margin-bottom:8px">➕ Add an entry</strong>' +
+      '<div class="fgrid">' +
+        '<div class="fg"><label>Type</label><select id="fin-type">' +
+          '<option value="income">💰 Other income (not classes)</option>' +
+          '<option value="expense">🧾 Expense</option>' +
+          '<option value="maaser">🤲 מעשר given</option>' +
+        '</select></div>' +
+        '<div class="fg"><label>Amount (' + _curr() + ') *</label><input id="fin-amt" type="number" step="0.01" placeholder="0"></div>' +
+        '<div class="fg"><label>Date</label><input id="fin-date" type="date" value="' + localISODate() + '"></div>' +
+        '<div class="fg"><label>Note</label><input id="fin-note" type="text" placeholder="e.g. babysitting / rent / to Tomchei Shabbos"></div>' +
+      '</div>' +
+      '<div style="margin-top:8px"><button class="btn btn-green" onclick="finAddEntry()">➕ Add</button></div>' +
+    '</div>';
+  }
+
+  // ---- settings ----
+  h += '<details style="background:#fff;border:1px solid #dde;border-radius:10px;padding:12px 14px;margin-bottom:14px"><summary style="cursor:pointer;font-weight:700">⚙ מעשר settings</summary>' +
+    '<div class="fgrid" style="margin-top:10px">' +
+      '<div class="fg"><label>Rate</label><select id="fin-rate" onchange="finSetCfg()">' +
+        '<option value="10"' + (c.maaserRate === 10 ? ' selected' : '') + '>מעשר — 10%</option>' +
+        '<option value="20"' + (c.maaserRate === 20 ? ' selected' : '') + '>חומש — 20%</option>' +
+        '<option value="custom"' + (c.maaserRate !== 10 && c.maaserRate !== 20 ? ' selected' : '') + '>Custom…</option>' +
+      '</select></div>' +
+      '<div class="fg" id="fin-customrate-wrap" style="' + (c.maaserRate !== 10 && c.maaserRate !== 20 ? '' : 'display:none') + '"><label>Custom %</label><input id="fin-customrate" type="number" min="0" max="100" step="0.5" value="' + c.maaserRate + '" onchange="finSetCfg()"></div>' +
+      '<div class="fg"><label>Count from</label><select id="fin-base" onchange="finSetCfg()">' +
+        '<option value="gross"' + (c.base === 'gross' ? ' selected' : '') + '>All income (gross)</option>' +
+        '<option value="net"' + (c.base === 'net' ? ' selected' : '') + '>Income minus expenses (net)</option>' +
+      '</select></div>' +
+      '<div class="fg"><label>Class income counts?</label><select id="fin-incclasses" onchange="finSetCfg()">' +
+        '<option value="yes"' + (c.includeClasses ? ' selected' : '') + '>Yes — include class payments</option>' +
+        '<option value="no"' + (!c.includeClasses ? ' selected' : '') + '>No — I track it separately</option>' +
+      '</select></div>' +
+      '<div class="fg"><label>Only count classes from <span class="hint">(blank = all time)</span></label><input id="fin-classesfrom" type="date" value="' + esc(c.classesFrom || '') + '" onchange="finSetCfg()"></div>' +
+    '</div>' +
+    '<p style="font-size:0.78rem;color:#888;margin-top:8px">Class income (' + _money(s.classIncome) + ') is read automatically from the Payments tab — no need to enter it again. Ask your rav which calculation applies to you; this is bookkeeping, not a psak.</p>' +
+  '</details>';
+
+  // ---- entries table ----
+  const entries = DB.finance.entries.slice().sort((a, b) => (_dateToYMD(b.date) || '').localeCompare(_dateToYMD(a.date) || ''));
+  h += '<div class="tw"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Note</th>' + (editMode ? '<th></th>' : '') + '</tr></thead><tbody>';
+  if (!entries.length) {
+    h += '<tr><td colspan="5" class="empty">No entries yet. Class income still counts automatically (' + _money(s.classIncome) + ' so far).</td></tr>';
+  } else {
+    entries.forEach(e => {
+      const idx = DB.finance.entries.indexOf(e);
+      const tl = e.type === 'income' ? '💰 Income' : (e.type === 'expense' ? '🧾 Expense' : '🤲 מעשר');
+      h += '<tr><td>' + _esc(e.date || '') + '</td><td>' + tl + '</td>' +
+        '<td><strong>' + _money(parseFloat(e.amount) || 0) + '</strong></td>' +
+        '<td>' + _esc(e.note || '') + '</td>' +
+        (editMode ? '<td><button class="btn btn-red btn-sm" onclick="finDeleteEntry(' + idx + ')">✕</button></td>' : '') +
+        '</tr>';
+    });
+  }
+  h += '</tbody></table></div>';
+  el.innerHTML = h;
+}
+function finAddEntry() {
+  _ensureFinance();
+  const type = document.getElementById('fin-type').value;
+  const amt = parseFloat(document.getElementById('fin-amt').value);
+  if (isNaN(amt) || amt <= 0) { alert('Enter a valid amount.'); return; }
+  const d = parseLocalDate(document.getElementById('fin-date').value || localISODate());
+  const date = (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
+  const note = document.getElementById('fin-note').value.trim();
+  DB.finance.entries.unshift({ id: 'fin_' + Date.now(), type, amount: amt, date, note });
+  logAction('settings', 'finance', (type === 'maaser' ? 'מעשר given ' : type + ' ') + _money(amt) + (note ? ' — ' + note : ''));
+  saveDB();
+  renderFinance();
+}
+function finDeleteEntry(idx) {
+  _ensureFinance();
+  const e = DB.finance.entries[idx];
+  if (!e) return;
+  if (!confirm('Delete this ' + e.type + ' entry of ' + _money(parseFloat(e.amount) || 0) + '?')) return;
+  _trashPush('Finance entry ' + _money(parseFloat(e.amount) || 0) + ' (' + e.type + ')', { financeEntries: [JSON.parse(JSON.stringify(e))] });
+  DB.finance.entries.splice(idx, 1);
+  saveDB();
+  renderFinance();
+}
+function finSetCfg() {
+  _ensureFinance();
+  const c = DB.finance.cfg;
+  const rateSel = document.getElementById('fin-rate').value;
+  if (rateSel === 'custom') {
+    document.getElementById('fin-customrate-wrap').style.display = '';
+    const cr = parseFloat(document.getElementById('fin-customrate').value);
+    if (!isNaN(cr) && cr >= 0 && cr <= 100) c.maaserRate = cr;
+  } else {
+    c.maaserRate = parseInt(rateSel);
+  }
+  c.base = document.getElementById('fin-base').value === 'net' ? 'net' : 'gross';
+  c.includeClasses = document.getElementById('fin-incclasses').value === 'yes';
+  c.classesFrom = document.getElementById('fin-classesfrom').value || '';
+  saveDB();
+  renderFinance();
+}
+
 /* ============ RECYCLE BIN — nothing is destroyed instantly ============
    Every delete stores a snapshot here first, so anything removed can be put back.
    Keeps the newest 50 deletions. */
@@ -3106,6 +3284,7 @@ function restoreFromTrash(id) {
   });
   (p.logs || []).forEach(l => { if (Array.isArray(DB._log)) DB._log.push(l); });
   if (Array.isArray(DB._log)) DB._log.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  (p.financeEntries || []).forEach(fe => { _ensureFinance(); DB.finance.entries.unshift(fe); });
 
   DB._trash.splice(i, 1);
   logAction('member', 'restore', 'Restored from Recycle Bin: ' + t.label);
@@ -3161,6 +3340,107 @@ function openTrash() {
   h += '<div class="factions">' +
     (items.length ? '<button class="btn btn-red" onclick="emptyTrash()">🗑 Empty Bin</button>' : '') +
     '<button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
+}
+
+/* ============ MERGE MEMBERS ============
+   Combines two member entries into one: history, payments, balances and totals all move
+   to the member you keep; the duplicate goes to the Recycle Bin. */
+function openMergeMembers() {
+  const names = (DB.members || []).map(m => m.name).sort((a, b) => (a || '').localeCompare(b || ''));
+  if (names.length < 2) { alert('Need at least two members to merge.'); return; }
+  const opts = names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+  document.getElementById('ov-charge-body').innerHTML =
+    '<div class="mh"><h2>🔀 Merge duplicate members</h2><button class="mclose" onclick="closeOv(\'ov-charge\')">✕</button></div>' +
+    '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:12px">' +
+    'Use this when the same person exists twice (e.g. "Sara Cohen" and "Sarah Cohen"). ' +
+    'Everything from the duplicate — payments, balance, totals, pauses — moves onto the one you keep. The duplicate goes to the Recycle Bin.</p>' +
+    '<div class="fgrid">' +
+      '<div class="fg"><label>KEEP this member</label><select id="mg-keep"><option value="">— choose —</option>' + opts + '</select></div>' +
+      '<div class="fg"><label>MERGE AWAY this duplicate</label><select id="mg-away"><option value="">— choose —</option>' + opts + '</select></div>' +
+    '</div>' +
+    '<div class="factions">' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-charge\')">Cancel</button>' +
+      '<button class="btn btn-blue" onclick="doMergeMembers()">🔀 Merge</button>' +
+    '</div>';
+  openOv('ov-charge');
+}
+function doMergeMembers() {
+  const keepName = document.getElementById('mg-keep').value;
+  const awayName = document.getElementById('mg-away').value;
+  if (!keepName || !awayName) { alert('Choose both members.'); return; }
+  if (keepName === awayName) { alert('Those are the same member — pick two different entries.'); return; }
+  const keep = DB.members.find(m => m.name === keepName);
+  const away = DB.members.find(m => m.name === awayName);
+  if (!keep || !away) { alert('Member not found.'); return; }
+  const fpAway = _memberFootprint(awayName);
+  if (!confirm('Merge "' + awayName + '" INTO "' + keepName + '"?\n\n' +
+    '• ' + fpAway.payments.length + ' payment(s) move over\n' +
+    '• Balance ' + _money(away.balance || 0) + ' is added to ' + keepName + '\'s balance\n' +
+    '• Totals and class counts are combined\n' +
+    '• "' + awayName + '" is removed (recoverable from the Recycle Bin)\n\nContinue?')) return;
+  if (typeof _pushUndo === 'function') _pushUndo('Merge ' + awayName + ' into ' + keepName);
+
+  _trashPush('Merged-away member "' + awayName + '"', { members: [JSON.parse(JSON.stringify(away))] });
+
+  keep.balance = (keep.balance || 0) + (away.balance || 0);
+  keep.totalPaid = (keep.totalPaid || 0) + (away.totalPaid || 0);
+  keep.totalOwed = (keep.totalOwed || 0) + (away.totalOwed || 0);
+  keep.totalClasses = (keep.totalClasses || 0) + (away.totalClasses || 0);
+  if (!keep.phone && away.phone) keep.phone = away.phone;
+  if (!keep.birthday && away.birthday) keep.birthday = away.birthday;
+  if (!keep.photo && away.photo) keep.photo = away.photo;
+  // Move name-keyed records over
+  (DB.payments || []).forEach(p => { if (p.name === awayName) p.name = keepName; });
+  (DB.paused || []).forEach(p => { if (p.name === awayName) p.name = keepName; });
+  (DB.classes || []).forEach(c => { if (c && Array.isArray(c.lines)) c.lines.forEach(ln => { if (ln.name === awayName) ln.name = keepName; }); });
+  DB.archived = (DB.archived || []).filter(a => a.name !== awayName);
+  DB.members = DB.members.filter(m => m.name !== awayName);
+  _clearRestoreProtect(awayName);
+
+  logAction('member', 'merge', 'Merged "' + awayName + '" into "' + keepName + '"');
+  closeOv('ov-charge');
+  saveDB();
+  reRenderAll();
+  alert('🔀 Done. Everything from "' + awayName + '" now belongs to "' + keepName + '".');
+}
+
+/* ============ MONTHLY SUMMARY — who's new, who left, how the month went ============ */
+function openMonthlySummary() {
+  const now = new Date();
+  const thisKey = _monthKey(now);
+  const lastM = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastKey = _monthKey(lastM);
+
+  function monthOf(dateStr) { const y = _dateToYMD(dateStr); return y ? y.slice(0, 7) : ''; }
+  const joined = (DB.members || []).filter(m => monthOf(m.startDate) === thisKey);
+  const left = (DB.archived || []).filter(a => monthOf(a.archivedDate) === thisKey);
+  const payThis = (DB.payments || []).filter(p => monthOf(p.date) === thisKey);
+  const payLast = (DB.payments || []).filter(p => monthOf(p.date) === lastKey);
+  const sumThis = payThis.reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
+  const sumLast = payLast.reduce((s, p) => s + (parseFloat(p.paid) || 0), 0);
+  const monthlyBills = (DB.classes || []).filter(c => c && c.monthly && c.monthKey === thisKey);
+  const billed = monthlyBills.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+  const monthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const trend = sumLast ? Math.round(((sumThis - sumLast) / sumLast) * 100) : null;
+
+  let h = '<div class="mh"><h2>📅 ' + esc(monthName) + ' at a glance</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+    '<div class="sc g"><div class="v">' + _money(sumThis) + '</div><div class="l">Collected this month' + (trend !== null ? ' (' + (trend >= 0 ? '+' : '') + trend + '% vs last)' : '') + '</div></div>' +
+    '<div class="sc"><div class="v">' + _money(billed) + '</div><div class="l">Billed via Charge-for-Month</div></div>' +
+    '<div class="sc g"><div class="v">' + joined.length + '</div><div class="l">New members</div></div>' +
+    '<div class="sc r"><div class="v">' + left.length + '</div><div class="l">Left / archived</div></div>' +
+  '</div>';
+  if (joined.length) h += '<div style="background:#e8f5e9;border-left:4px solid #4a8c4a;padding:9px 12px;border-radius:6px;margin-bottom:8px;font-size:0.88rem">🌱 <strong>Joined:</strong> ' + _esc(joined.map(m => m.name).join(', ')) + '</div>';
+  if (left.length) h += '<div style="background:#fdecea;border-left:4px solid #c0392b;padding:9px 12px;border-radius:6px;margin-bottom:8px;font-size:0.88rem">👋 <strong>Left:</strong> ' + _esc(left.map(a => a.name).join(', ')) + '</div>';
+  const owing = (DB.members || []).filter(m => isActiveInGroup(m) && (m.balance || 0) > 0).sort((a, b) => b.balance - a.balance).slice(0, 5);
+  if (owing.length) {
+    h += '<div style="margin-top:10px"><strong style="font-size:0.9rem">Top open balances:</strong><div class="tw"><table style="margin-top:6px"><thead><tr><th>Member</th><th>Owes</th></tr></thead><tbody>' +
+      owing.map(m => '<tr><td>' + _esc(m.name) + '</td><td>' + balHTML(m.balance) + '</td></tr>').join('') +
+      '</tbody></table></div></div>';
+  }
+  h += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
   document.getElementById('ov-billing-history-body').innerHTML = h;
   openOv('ov-billing-history');
 }
@@ -3656,7 +3936,7 @@ function openAddPayment(preset) {
     '<div class="fg"><label>Date *</label><input id="ap-date" type="date" autocomplete="off" value="' + localISODate() + '"></div>' +
     '<div class="fg"><label>Amount Paid (' + _curr() + ') *</label><input id="ap-amt" type="number" autocomplete="off" placeholder="0"></div>' +
     '<div class="fg"><label>Method <span class="hint">(optional)</span></label><select id="ap-method" autocomplete="off"><option value="">—</option>' +
-      (DB.settings.paymentMethods || []).map(pm => '<option value="' + esc(pm) + '">' + esc(pm) + '</option>').join('') +
+      (DB.settings.paymentMethods || []).map(pm => '<option value="' + esc(pm) + '"' + (pm === (DB.settings.backend && DB.settings.backend.defaultPaymentMethod) ? ' selected' : '') + '>' + esc(pm) + '</option>').join('') +
     '</select></div>' +
     '<div class="fg" style="grid-column:1/-1"><label>Group(s) *</label>' + groupPickerHTML('ap-group-picker', '') + '</div>' +
     '<div class="fg"><label>Current Balance</label><input id="ap-cur" type="number" autocomplete="off" readonly></div>' +
@@ -6390,6 +6670,7 @@ function _ensureSettingsSchema() {
   if (typeof b.confirmDeletePayment !== 'boolean') b.confirmDeletePayment = true;
   if (typeof b.confirmRiskyArchive !== 'boolean') b.confirmRiskyArchive = true;
   if (typeof b.smartChargeWarn !== 'boolean') b.smartChargeWarn = true;
+  if (typeof b.defaultPaymentMethod !== 'string') b.defaultPaymentMethod = '';
   if (typeof b.welcomeBackOnLoad !== 'boolean') b.welcomeBackOnLoad = false;
   if (typeof b.customCSS !== 'string') b.customCSS = '';
   // v24 Advanced — UI / interface customization
@@ -7017,7 +7298,7 @@ function _deviceLabel() {
 /* ============ v23: SAFETY — Undo, Read-Only Lock, PIN, Self-Test, Risky-Move warnings ============ */
 
 // ---------- Undo system ----------
-const _UNDO_MAX = 5;
+const _UNDO_MAX = 30;   // was 5 — a real history you can step back through
 let _undoStack = []; // [{ snapshot, label, ts }]
 let _undoTimer = null;
 function _pushUndo(label) {
@@ -7042,6 +7323,43 @@ function _showUndoButton(label) {
   _undoTimer = setTimeout(() => {
     if (bar) { bar.style.opacity = '0'; setTimeout(() => bar && bar.remove(), 300); }
   }, 10000);
+}
+// Visible change history — step back to any point, not just the last action.
+function openUndoHistory() {
+  let h = '<div class="mh"><h2>⏪ Change History</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  h += '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:12px">' +
+       'Every recent change is listed newest-first. "Go back to before this" rewinds the whole app to the moment just before that action. Holds the last ' + _UNDO_MAX + ' changes (since this page was opened).</p>';
+  if (!_undoStack.length) {
+    h += '<p style="text-align:center;color:#888;padding:24px">No changes recorded yet in this session.</p>';
+  } else {
+    h += '<div class="tw"><table style="margin:0"><thead><tr><th>#</th><th>Action</th><th>When</th><th></th></tr></thead><tbody>';
+    for (let i = _undoStack.length - 1; i >= 0; i--) {
+      const u = _undoStack[i];
+      h += '<tr><td style="color:#888">' + (_undoStack.length - i) + '</td>' +
+        '<td><strong>' + _esc(u.label) + '</strong></td>' +
+        '<td style="font-size:0.8rem;color:#888">' + new Date(u.ts).toLocaleTimeString() + '</td>' +
+        '<td><button class="btn btn-orange btn-sm" onclick="undoToIndex(' + i + ')">⏪ Go back to before this</button></td></tr>';
+    }
+    h += '</tbody></table></div>';
+  }
+  h += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  document.getElementById('ov-billing-history-body').innerHTML = h;
+  openOv('ov-billing-history');
+}
+function undoToIndex(i) {
+  if (i < 0 || i >= _undoStack.length) return;
+  const target = _undoStack[i];
+  const steps = _undoStack.length - i;
+  if (!confirm('Rewind the app to just before "' + target.label + '"?\n\nThis undoes ' + steps + ' change(s). Anything done after that point is reverted.')) return;
+  try {
+    DB = JSON.parse(target.snapshot);
+    _undoStack.length = i;   // drop everything at/after the restore point
+    saveDB();
+    reRenderAll();
+    closeOv('ov-billing-history');
+    logAction('settings', 'undo', 'Rewound ' + steps + ' change(s) to before: ' + target.label);
+    alert('⏪ Rewound to before "' + target.label + '".');
+  } catch (e) { alert('⚠ Rewind failed: ' + e.message); }
 }
 function undoLast() {
   if (!_undoStack.length) { alert('Nothing to undo.'); return; }
@@ -8051,6 +8369,12 @@ function renderSettings() {
         advRow('Confirm before deleting payments', 'confirmDeletePayment', 'toggle') +
         advRow('Extra warning for risky archive', 'confirmRiskyArchive', 'toggle', 'Members with credit / large debt require typing "yes" to archive.') +
         advRow('Smart Charge-Everyone warnings', 'smartChargeWarn', 'toggle', 'Day-of-week + already-charged-today checks.') +
+      '</div>' +
+    '</details>' +
+    '<details style="margin-bottom:10px"><summary style="cursor:pointer;padding:8px 0;font-weight:700;color:#1a3a5c">💰 Payments</summary>' +
+      '<div style="padding-top:6px">' +
+        advRow('Default payment method', 'defaultPaymentMethod', 'select', 'Pre-selected in the Record Payment form.',
+          [{ v: '', l: '— none —' }].concat((DB.settings.paymentMethods || []).map(pm => ({ v: pm, l: pm })))) +
       '</div>' +
     '</details>' +
     '<details><summary style="cursor:pointer;padding:8px 0;font-weight:700;color:#1a3a5c">🎨 Custom CSS</summary>' +
