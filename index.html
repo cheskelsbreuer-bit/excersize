@@ -558,6 +558,7 @@ body.density-compact .fx-hero { padding: 14px 16px; }
         <button class="menu-item" onclick="openMergeMembers();toggleMenu()">🔀 Merge Duplicates</button>
         <button class="menu-item" onclick="openMonthlySummary();toggleMenu()">📅 This Month at a Glance</button>
         <button class="menu-item" onclick="openUndoHistory();toggleMenu()">⏪ Change History</button>
+        <button class="menu-item" onclick="openVersionHistory();toggleMenu()">⏮ Earlier Versions (get data back)</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
       </div>
@@ -1013,6 +1014,7 @@ function saveDB() {
     }
     // Also save to IndexedDB (survives file:// scenarios where localStorage fails)
     idbSet(STORAGE_KEY, DB).catch(e => console.warn('IDB save failed:', e));
+    try { if (typeof _eg_maybeDailySnapshot === 'function') _eg_maybeDailySnapshot(); } catch (e) {}
     _unsavedChanges = true;
     updateSaveIndicator(lsOk);
     // v26: schedule cloud sync push (debounced) if enabled
@@ -7537,20 +7539,23 @@ async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
   // NOT Date.now(). Otherwise localTs vs cloudTs comparison drifts apart on every sync and
   // browsers always think their local data is newer than the cloud, so they push and never pull.
   const ts = (typeof DB !== 'undefined' && DB._savedAt) ? DB._savedAt : Date.now();
+  const body = JSON.stringify({ user_id: userId, data: encryptedData, updated_at: new Date(ts).toISOString(), device_label: _deviceLabel() });
   const resp = await fetch(url + '/rest/v1/app_data?on_conflict=user_id', {
     method: 'POST',
+    // v33: keepalive lets a push finish even if the tab is closed right after a save
+    keepalive: body.length < KEEPALIVE_MAX_BODY,
     headers: {
       'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey,
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates,return=minimal'
     },
-    body: JSON.stringify({ user_id: userId, data: encryptedData, updated_at: new Date(ts).toISOString(), device_label: _deviceLabel() })
+    body: body
   });
   if (!resp.ok) {
     const txt = await resp.text();
     throw new Error('Push failed (' + resp.status + '): ' + txt.slice(0, 200));
   }
-  return true;
+  return ts;
 }
 async function _eg_supabasePull(url, anonKey, userId) {
   const resp = await fetch(url + '/rest/v1/app_data?user_id=eq.' + encodeURIComponent(userId) + '&select=data,updated_at,device_label', {
@@ -7561,7 +7566,378 @@ async function _eg_supabasePull(url, anonKey, userId) {
   return arr.length ? arr[0] : null;
 }
 
-// The main sync orchestrator — push, pull, or auto (newer wins)
+/* ============ v33: SAFE SYNC — a sync can never lose a day again ============
+   The old sync replaced one whole copy with the other, chosen by comparing device
+   clocks. A tab that had missed a pull pushed its stale copy on its next edit, and
+   the other device then pulled that copy and lost everything entered since.
+   Now:
+     • each device remembers what it last synced (a "base" copy in IndexedDB),
+     • when BOTH sides changed, the three copies are merged field by field,
+     • anything about to be replaced is kept — a local copy (⏮ Earlier versions)
+       and, once the table exists, a row in app_data_history in the cloud.       */
+const SYNC_STATE_KEY = 'eg_syncState';
+const SYNC_BASE_KEY = 'syncBase';
+const SNAPSHOTS_KEY = 'snapshots';
+const SNAPSHOTS_MAX = 20;
+const HISTORY_MIN_GAP = 10 * 60 * 1000;
+const KEEPALIVE_MAX_BODY = 60000; // browsers reject keepalive requests with bodies over 64 KB
+
+const _EG_HISTORY_SQL =
+'-- Version history (v33): keeps the last 40 copies so nothing is ever unrecoverable\n' +
+'CREATE TABLE IF NOT EXISTS app_data_history (\n' +
+'  id BIGSERIAL PRIMARY KEY,\n' +
+'  user_id TEXT NOT NULL,\n' +
+'  data TEXT NOT NULL,\n' +
+'  saved_at TIMESTAMPTZ NOT NULL,\n' +
+'  device_label TEXT,\n' +
+'  created_at TIMESTAMPTZ DEFAULT NOW()\n' +
+');\n' +
+'CREATE INDEX IF NOT EXISTS app_data_history_user_idx ON app_data_history (user_id, saved_at DESC);\n' +
+'ALTER TABLE app_data_history ENABLE ROW LEVEL SECURITY;\n' +
+'DROP POLICY IF EXISTS "Allow anon read history"  ON app_data_history;\n' +
+'DROP POLICY IF EXISTS "Allow anon write history" ON app_data_history;\n' +
+'CREATE POLICY "Allow anon read history"  ON app_data_history FOR SELECT TO anon USING (true);\n' +
+'CREATE POLICY "Allow anon write history" ON app_data_history FOR INSERT TO anon WITH CHECK (true);\n' +
+'-- Nobody can delete history from the app; this trigger alone trims it to the newest 40 per user\n' +
+'CREATE OR REPLACE FUNCTION app_data_history_prune() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$\n' +
+'BEGIN\n' +
+'  DELETE FROM app_data_history WHERE user_id = NEW.user_id AND id NOT IN (\n' +
+'    SELECT id FROM app_data_history WHERE user_id = NEW.user_id ORDER BY saved_at DESC, id DESC LIMIT 40);\n' +
+'  RETURN NULL;\n' +
+'END $$;\n' +
+'DROP TRIGGER IF EXISTS app_data_history_prune_trg ON app_data_history;\n' +
+'CREATE TRIGGER app_data_history_prune_trg AFTER INSERT ON app_data_history\n' +
+'  FOR EACH ROW EXECUTE FUNCTION app_data_history_prune();';
+
+function _eg_syncConfigured() {
+  const cfg = DB && DB.settings && DB.settings.backend;
+  return !!(cfg && cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.supabaseAnonKey && cfg.syncPassphrase);
+}
+function _eg_sbHeaders(anonKey, extra) {
+  return Object.assign({ 'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey }, extra || {});
+}
+
+// Device-local record of the last successful sync. Lives OUTSIDE the synced DB on
+// purpose: a pulled copy carries the other device's sync fields, not ours.
+function _eg_getSyncState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || 'null');
+    return (s && typeof s.lastCloudTs === 'number' && typeof s.lastSavedAt === 'number') ? s : null;
+  } catch (e) { return null; }
+}
+function _eg_setSyncState(lastCloudTs, lastSavedAt) {
+  try { localStorage.setItem(SYNC_STATE_KEY, JSON.stringify({ lastCloudTs: lastCloudTs, lastSavedAt: lastSavedAt })); } catch (e) {}
+}
+function _eg_clearSyncState() {
+  try { localStorage.removeItem(SYNC_STATE_KEY); } catch (e) {}
+  idbDelete(SYNC_BASE_KEY).catch(() => {});
+}
+async function _eg_saveBase(db, cloudTs) {
+  try { await idbSet(SYNC_BASE_KEY, { cloudTs: cloudTs, json: JSON.stringify(db) }); } catch (e) {}
+}
+async function _eg_loadBase(cloudTs) {
+  try {
+    const b = await idbGet(SYNC_BASE_KEY);
+    if (b && b.json && Math.abs((b.cloudTs || 0) - cloudTs) <= 1) return JSON.parse(b.json);
+  } catch (e) {}
+  return null;
+}
+
+// Copies of data we were about to replace. Device-local, outside the synced DB.
+async function _eg_listSnapshots() {
+  try { return (await idbGet(SNAPSHOTS_KEY)) || []; } catch (e) { return []; }
+}
+async function _eg_snapshot(reason, db) {
+  try {
+    const json = JSON.stringify(db);
+    const list = await _eg_listSnapshots();
+    if (list.length && list[0].json === json) {
+      // Same data already kept — keep the more telling label
+      if (list[0].reason === 'Daily copy' && reason !== 'Daily copy') { list[0].reason = reason; await idbSet(SNAPSHOTS_KEY, list); }
+      return;
+    }
+    list.unshift({
+      id: 'snap_' + Date.now() + '_' + Math.floor(Math.random() * 10000),
+      ts: Date.now(), reason: reason, savedAt: db._savedAt || 0,
+      members: (db.members || []).length, payments: (db.payments || []).length, json: json
+    });
+    if (list.length > SNAPSHOTS_MAX) list.length = SNAPSHOTS_MAX;
+    await idbSet(SNAPSHOTS_KEY, list);
+  } catch (e) { console.warn('Snapshot failed:', e); }
+}
+function _eg_maybeDailySnapshot() {
+  const today = new Date().toDateString();
+  let last = '';
+  try { last = localStorage.getItem('eg_lastDailySnap') || ''; } catch (e) {}
+  if (last === today) return;
+  try { localStorage.setItem('eg_lastDailySnap', today); } catch (e) {}
+  _eg_snapshot('Daily copy', DB);
+}
+
+// Cloud version history — one row per push (at most one per 10 min per device, plus
+// every merge and every copy we overwrite). Silently off until the table exists.
+let _eg_historyStatus = 'unknown'; // 'ok' | 'missing' | 'unknown'
+async function _eg_pushHistory(url, anonKey, userId, encryptedData, savedAt, deviceLabel, force) {
+  if (_eg_historyStatus === 'missing') return;
+  if (!force) {
+    let last = 0;
+    try { last = parseInt(localStorage.getItem('eg_lastHistoryAt') || '0', 10) || 0; } catch (e) {}
+    if (Date.now() - last < HISTORY_MIN_GAP) return;
+  }
+  try {
+    const body = JSON.stringify({ user_id: userId, data: encryptedData, saved_at: new Date(savedAt).toISOString(), device_label: deviceLabel || '' });
+    const resp = await fetch(url + '/rest/v1/app_data_history', {
+      method: 'POST', keepalive: body.length < KEEPALIVE_MAX_BODY,
+      headers: _eg_sbHeaders(anonKey, { 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }),
+      body: body
+    });
+    if (resp.ok) {
+      _eg_historyStatus = 'ok';
+      if (!force) { try { localStorage.setItem('eg_lastHistoryAt', String(Date.now())); } catch (e) {} }
+    } else if (resp.status === 404 || resp.status === 400) {
+      _eg_historyStatus = 'missing';
+    }
+  } catch (e) {}
+}
+async function _eg_listHistory() {
+  const cfg = DB.settings.backend;
+  const url = _eg_normalizeSupabaseUrl(cfg.supabaseUrl);
+  const userId = await _eg_userIdFromPassphrase(cfg.syncPassphrase);
+  const resp = await fetch(url + '/rest/v1/app_data_history?user_id=eq.' + encodeURIComponent(userId) +
+    '&select=id,saved_at,device_label&order=saved_at.desc,id.desc&limit=40', { headers: _eg_sbHeaders(cfg.supabaseAnonKey) });
+  if (resp.status === 404 || resp.status === 400) { _eg_historyStatus = 'missing'; return null; }
+  if (!resp.ok) throw new Error('Could not list cloud history (' + resp.status + ')');
+  _eg_historyStatus = 'ok';
+  return resp.json();
+}
+async function _eg_fetchHistoryRow(id) {
+  const cfg = DB.settings.backend;
+  const url = _eg_normalizeSupabaseUrl(cfg.supabaseUrl);
+  const resp = await fetch(url + '/rest/v1/app_data_history?id=eq.' + encodeURIComponent(id) + '&select=data', { headers: _eg_sbHeaders(cfg.supabaseAnonKey) });
+  if (!resp.ok) throw new Error('Could not fetch that copy (' + resp.status + ')');
+  const arr = await resp.json();
+  if (!arr.length) throw new Error('That copy is gone.');
+  return _eg_decrypt(arr[0].data, cfg.syncPassphrase);
+}
+
+/* MERGE-BEGIN */
+// Three-way merge: base = what this device last synced, local = this device now,
+// cloud = the other device's copy. Lists are matched by id, else by name (payments
+// by the whole line); running totals changed on both sides are added, not picked.
+const _EG_COUNTERS = { balance: 1, totalPaid: 1, totalOwed: 1, totalClasses: 1, pausedClasses: 1, pausedAmount: 1 };
+function _eg_isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+function _eg_clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
+function _eg_deepEq(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!_eg_deepEq(a[i], b[i])) return false;
+    return true;
+  }
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) { if (!(k in b) || !_eg_deepEq(a[k], b[k])) return false; }
+  return true;
+}
+function _eg_recKey(rec, path) {
+  if (!_eg_isObj(rec)) return null;
+  if (rec.id != null && rec.id !== '') return 'id:' + rec.id;
+  if (typeof rec.name === 'string' && rec.name.trim()) {
+    const n = rec.name.trim().toLowerCase();
+    if (path === 'payments') return 'p:' + [n, rec.date, rec.paid, rec.amount, rec.method, rec.group].join('|');
+    return 'n:' + n;
+  }
+  return null;
+}
+function _eg_keyArray(arr, path) {
+  const map = new Map(), keys = [], counts = {};
+  for (let i = 0; i < arr.length; i++) {
+    let k = _eg_recKey(arr[i], path);
+    if (k === null) return null;
+    counts[k] = (counts[k] || 0) + 1;
+    if (counts[k] > 1) k += '#' + counts[k];
+    map.set(k, i); keys.push(k);
+  }
+  return { map: map, keys: keys };
+}
+function _eg_mergeKeyed(base, local, cloud, lk, ck, path) {
+  const bk = Array.isArray(base) ? _eg_keyArray(base, path) : null;
+  const bAt = (k) => (bk && bk.map.has(k)) ? base[bk.map.get(k)] : undefined;
+  const out = [], seen = new Set();
+  ck.keys.forEach((k, i) => {
+    seen.add(k);
+    const c = cloud[i], b = bAt(k);
+    if (lk.map.has(k)) out.push(_eg_merge3(b, local[lk.map.get(k)], c, path + '[]'));
+    else if (b !== undefined && _eg_deepEq(c, b)) return;   // this device deleted it; other side left it alone
+    else out.push(_eg_clone(c));                             // other side added or edited it
+  });
+  lk.keys.forEach((k, i) => {
+    if (seen.has(k)) return;
+    const l = local[i], b = bAt(k);
+    if (b !== undefined && _eg_deepEq(l, b)) return;         // other side deleted it; this device left it alone
+    out.splice(Math.min(i, out.length), 0, _eg_clone(l));    // this device added or edited it
+  });
+  return out;
+}
+function _eg_merge3(base, local, cloud, path) {
+  path = path || '';
+  if (_eg_deepEq(local, base)) return _eg_clone(cloud);
+  if (_eg_deepEq(cloud, base)) return _eg_clone(local);
+  if (_eg_deepEq(local, cloud)) return _eg_clone(local);
+  if (_eg_isObj(local) && _eg_isObj(cloud)) {
+    const b = _eg_isObj(base) ? base : {};
+    const out = {};
+    const keys = Object.keys(cloud).concat(Object.keys(local).filter(k => !(k in cloud)));
+    keys.forEach(k => {
+      const inL = k in local, inC = k in cloud, inB = k in b;
+      const leaf = path ? path + '.' + k : k;
+      if (inL && inC) {
+        if (_EG_COUNTERS[k] && typeof local[k] === 'number' && typeof cloud[k] === 'number' && typeof b[k] === 'number' &&
+            local[k] !== b[k] && cloud[k] !== b[k] && local[k] !== cloud[k]) {
+          out[k] = Math.round((b[k] + (local[k] - b[k]) + (cloud[k] - b[k])) * 100) / 100;
+        } else {
+          out[k] = _eg_merge3(b[k], local[k], cloud[k], leaf);
+        }
+      } else if (inL) {
+        if (!(inB && _eg_deepEq(local[k], b[k]))) out[k] = _eg_clone(local[k]);
+      } else {
+        if (!(inB && _eg_deepEq(cloud[k], b[k]))) out[k] = _eg_clone(cloud[k]);
+      }
+    });
+    return out;
+  }
+  if (Array.isArray(local) && Array.isArray(cloud)) {
+    const lk = _eg_keyArray(local, path), ck = _eg_keyArray(cloud, path);
+    if (lk && ck) return _eg_mergeKeyed(base, local, cloud, lk, ck, path);
+    const prim = (v) => v === null || typeof v !== 'object';
+    if (local.every(prim) && cloud.every(prim)) {
+      const b = Array.isArray(base) ? base : [];
+      const out = [];
+      cloud.forEach(v => { if (!(b.includes(v) && !local.includes(v)) && !out.includes(v)) out.push(v); });
+      local.forEach(v => { if (!(b.includes(v) && !cloud.includes(v)) && !out.includes(v)) out.push(v); });
+      return out;
+    }
+    return _eg_clone(local);
+  }
+  if ((path === '_savedAt' || path === '_v') && typeof local === 'number' && typeof cloud === 'number') return Math.max(local, cloud);
+  return _eg_clone(local);
+}
+/* MERGE-END */
+
+/* ---------- ⏮ Earlier versions — look at and go back to any kept copy ---------- */
+function _eg_describeVersion(db) {
+  if (!db || !Array.isArray(db.members)) return '<em style="color:#c0392b">Not readable</em>';
+  const pays = (db.payments || []).slice(0, 5).map(p =>
+    _esc(p.name || '') + ' · ' + _esc(p.date || '') + ' · ' + _esc(String(p.paid != null ? p.paid : (p.amount || '')))).join('<br>');
+  const fin = (db.finance && db.finance.entries) ? db.finance.entries.length : 0;
+  const lastLog = (db._log && db._log[0]) ? new Date(db._log[0].ts).toLocaleString() + ' — ' + _esc(db._log[0].details || db._log[0].action || '') : '—';
+  return '<div style="font-size:0.82rem;line-height:1.6">' +
+    '<strong>' + db.members.length + '</strong> members · <strong>' + (db.payments || []).length + '</strong> payments · <strong>' + (db.archived || []).length + '</strong> former · <strong>' + fin + '</strong> finance entries<br>' +
+    '<span style="color:#666">Newest payments:</span><br>' + (pays || '<span style="color:#888">none</span>') + '<br>' +
+    '<span style="color:#666">Last logged action:</span> ' + lastLog +
+    '</div>';
+}
+async function _eg_applyVersion(obj, label) {
+  if (!obj || !Array.isArray(obj.members)) { alert('That copy is not readable.'); return; }
+  if (!confirm('Go back to this copy?\n\n' + label + '\n\nThe data you have right now is kept under "On this device" first, so this can be undone.')) return;
+  await _eg_snapshot('Before going back to: ' + label, DB);
+  const cur = DB.settings && DB.settings.backend;
+  DB = obj;
+  if (!DB.archived) DB.archived = [];
+  if (!DB.notes) DB.notes = { combos: [] };
+  _ensureSettingsSchema();
+  if (cur) {
+    // This device keeps its own cloud connection whatever the old copy had.
+    DB.settings.backend.supabaseUrl = cur.supabaseUrl;
+    DB.settings.backend.supabaseAnonKey = cur.supabaseAnonKey;
+    DB.settings.backend.syncPassphrase = cur.syncPassphrase;
+    DB.settings.backend.cloudSyncProvider = cur.cloudSyncProvider;
+  }
+  logAction('settings', 'restore-version', 'Went back to an earlier copy: ' + label);
+  saveDB();
+  reRenderAll();
+  closeOv('ov-billing-history');
+  alert('⏮ Done — this device now shows: ' + label + (_eg_syncConfigured() ? '\n\nIt will sync to your other devices.' : ''));
+}
+async function peekLocalVersion(id) {
+  const box = document.getElementById('peek-' + id);
+  if (!box) return;
+  const s = (await _eg_listSnapshots()).find(x => x.id === id);
+  box.innerHTML = s ? _eg_describeVersion(JSON.parse(s.json)) : 'Gone.';
+}
+async function restoreLocalVersion(id) {
+  const s = (await _eg_listSnapshots()).find(x => x.id === id);
+  if (!s) { alert('That copy is no longer here.'); return; }
+  await _eg_applyVersion(JSON.parse(s.json), s.reason + ' (' + new Date(s.ts).toLocaleString() + ')');
+}
+async function peekCloudVersion(id, when) {
+  const box = document.getElementById('peek-c' + id);
+  if (!box) return;
+  box.innerHTML = '<span style="color:#888">Unlocking…</span>';
+  try { box.innerHTML = _eg_describeVersion(await _eg_fetchHistoryRow(id)); }
+  catch (e) { box.innerHTML = '<span style="color:#c0392b">' + _esc(e.message) + '</span>'; }
+}
+async function restoreCloudVersion(id, when) {
+  try { await _eg_applyVersion(await _eg_fetchHistoryRow(id), 'Cloud copy from ' + when); }
+  catch (e) { alert('⚠ ' + e.message); }
+}
+async function openVersionHistory() {
+  const body = document.getElementById('ov-billing-history-body');
+  const head = '<div class="mh"><h2>⏮ Earlier versions</h2><button class="mclose" onclick="closeOv(\'ov-billing-history\')">✕</button></div>';
+  body.innerHTML = head + '<p style="color:#888;padding:20px;text-align:center">Looking for earlier copies…</p>';
+  openOv('ov-billing-history');
+  const snaps = await _eg_listSnapshots();
+  let rows = null, cloudErr = '';
+  if (_eg_syncConfigured()) { try { rows = await _eg_listHistory(); } catch (e) { cloudErr = e.message; } }
+
+  let h = head +
+    '<p style="color:#555;font-size:0.88rem;background:#eaf3fb;padding:10px;border-radius:6px;border-left:4px solid #2d6a9f;margin-bottom:12px">' +
+    'Whenever a sync replaces data, the copy being replaced is kept here — plus one copy a day. ' +
+    '<strong>Look</strong> shows what a copy holds; <strong>Go back</strong> makes it the live data (the current data is kept first, so you can always come back).</p>';
+
+  // Cards, not a table: this screen gets opened on a phone at a stressful moment.
+  const card = (when, title, holds, peekId, look, back) =>
+    '<div style="border:1px solid #dde3ea;border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#fff">' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline">' +
+        '<span style="font-size:0.8rem;color:#666;white-space:nowrap">' + when + '</span>' +
+        '<span style="font-weight:700;font-size:0.88rem;flex:1 1 160px">' + title + '</span>' +
+        (holds ? '<span style="font-size:0.8rem;color:#666;white-space:nowrap">' + holds + '</span>' : '') +
+      '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+        '<button class="btn btn-gray btn-sm" onclick="' + look + '">👀 Look</button>' +
+        '<button class="btn btn-orange btn-sm" onclick="' + back + '">⏮ Go back to this</button>' +
+      '</div>' +
+      '<div id="' + peekId + '" style="margin-top:6px"></div>' +
+    '</div>';
+
+  h += '<h3 style="margin:14px 0 6px;font-size:0.95rem">📱 On this device</h3>';
+  if (!snaps.length) h += '<p style="color:#888;font-size:0.85rem">No kept copies yet on this device.</p>';
+  else snaps.forEach(s => {
+    h += card(new Date(s.ts).toLocaleString(), _esc(s.reason), s.members + ' members · ' + s.payments + ' payments', 'peek-' + s.id,
+      "peekLocalVersion('" + s.id + "')", "restoreLocalVersion('" + s.id + "')");
+  });
+
+  h += '<h3 style="margin:18px 0 6px;font-size:0.95rem">☁ In the cloud</h3>';
+  if (!_eg_syncConfigured()) h += '<p style="color:#888;font-size:0.85rem">Cloud sync is off, so there are no cloud copies.</p>';
+  else if (cloudErr) h += '<p style="color:#c0392b;font-size:0.85rem">' + _esc(cloudErr) + '</p>';
+  else if (rows === null) {
+    h += '<div style="background:#fff3cd;border-left:4px solid #d97706;padding:10px 12px;border-radius:6px;font-size:0.85rem;color:#856404">' +
+      '<strong>Cloud history is not set up yet.</strong> One-time step: open your Supabase project → SQL Editor → New query, paste this and click Run. From then on every device keeps the last 40 copies in the cloud too.' +
+      '<textarea id="hist-sql" readonly style="width:100%;height:120px;font-family:monospace;font-size:0.72rem;padding:8px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff;margin-top:8px" onclick="this.select()">' + _esc(_EG_HISTORY_SQL) + '</textarea>' +
+      '<button class="btn btn-blue btn-sm" style="margin-top:6px" onclick="navigator.clipboard.writeText(document.getElementById(\'hist-sql\').value);alert(\'📋 SQL copied\')">📋 Copy SQL</button></div>';
+  } else if (!rows.length) h += '<p style="color:#888;font-size:0.85rem">No cloud copies yet — the next sync will add one.</p>';
+  else rows.forEach(r => {
+    const when = new Date(r.saved_at).toLocaleString();
+    h += card(when, 'Saved by ' + _esc(r.device_label || 'a device'), '', 'peek-c' + r.id,
+      'peekCloudVersion(' + r.id + ",'" + _escAttr(when) + "')", 'restoreCloudVersion(' + r.id + ",'" + _escAttr(when) + "')");
+  });
+  h += '<div class="factions"><button class="btn btn-gray" onclick="closeOv(\'ov-billing-history\')">Close</button></div>';
+  body.innerHTML = h;
+}
+
+// The main sync orchestrator — push, pull, merge, or auto (what changed wins)
 let _eg_syncInFlight = false;
 let _eg_syncPromise = null;
 // Wrapper: when a sync is already running, RETURN THE IN-FLIGHT PROMISE instead of a
@@ -7578,7 +7954,6 @@ async function _eg_syncNowImpl(direction, opts) {
   // v27: silent param skips the floating indicator (used by auto-sync after every save)
   const silent = !!(opts && opts.silent);
   if (!silent) _eg_setSyncStatus('syncing', 'Syncing…');
-  // Always update the small header pill if it exists
   _eg_updateHeaderSyncPill('syncing');
   try {
     _ensureSettingsSchema();
@@ -7586,24 +7961,73 @@ async function _eg_syncNowImpl(direction, opts) {
     if (cfg.cloudSyncProvider !== 'supabase') throw new Error('Cloud sync provider is not Supabase. Set it in Advanced → Cloud sync.');
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('Supabase URL and anon key are required.');
     if (!cfg.syncPassphrase || cfg.syncPassphrase.length < 8) throw new Error('Set a sync passphrase (8+ chars) in Advanced → Cloud sync.');
-    // v26 BUGFIX: normalize URL in case it has /rest/v1 or trailing slash
     const cleanUrl = _eg_normalizeSupabaseUrl(cfg.supabaseUrl);
     if (cleanUrl !== cfg.supabaseUrl) { cfg.supabaseUrl = cleanUrl; }
-    const userId = await _eg_userIdFromPassphrase(cfg.syncPassphrase);
-    const cloud = await _eg_supabasePull(cleanUrl, cfg.supabaseAnonKey, userId);
+    const key = cfg.supabaseAnonKey, pass = cfg.syncPassphrase;
+    const userId = await _eg_userIdFromPassphrase(pass);
+    const cloud = await _eg_supabasePull(cleanUrl, key, userId);
     const cloudTs = cloud ? new Date(cloud.updated_at).getTime() : 0;
     const localTs = DB._savedAt || 0;
+    const otherLabel = (cloud && cloud.device_label) || 'another device';
 
-    let didPush = false, didPull = false;
-    if (direction === 'push' || (direction === 'auto' && (!cloud || localTs > cloudTs))) {
-      const encrypted = await _eg_encrypt(DB, cfg.syncPassphrase);
-      await _eg_supabasePush(cleanUrl, cfg.supabaseAnonKey, userId, encrypted);
+    // v33: decide by what CHANGED since this device last synced, not by whose clock is later.
+    const st = _eg_getSyncState();
+    const cloudMoved = !!cloud && (!st || Math.abs(cloudTs - st.lastCloudTs) > 1);
+    const localMoved = !st || localTs !== st.lastSavedAt;
+
+    let action;
+    if (direction === 'push') action = (cloudMoved && st) ? 'merge' : 'push';
+    else if (direction === 'pull') action = cloud ? 'pull' : 'none';
+    else if (!cloud) action = 'push';
+    else if (!st) action = localTs > cloudTs ? 'push' : (cloudTs > localTs ? 'pull' : 'none'); // first sync since the upgrade: no base yet
+    else if (cloudMoved && localMoved) action = 'merge';
+    else if (cloudMoved) action = 'pull';
+    else if (localMoved) action = 'push';
+    else action = 'none';
+
+    let cloudCopy = null;
+    if (cloud && (action === 'merge' || action === 'pull' || (action === 'push' && cloudMoved))) cloudCopy = await _eg_decrypt(cloud.data, pass);
+
+    let didPush = false, didPull = false, didMerge = false, newCloudTs = cloudTs;
+    if (action === 'merge') {
+      const base = await _eg_loadBase(st.lastCloudTs);
+      if (base) {
+        await _eg_snapshot('Before merging — this device', DB);
+        await _eg_snapshot('Before merging — from ' + otherLabel, cloudCopy);
+        const merged = _eg_merge3(base, DB, cloudCopy, '');
+        merged._savedAt = Date.now();
+        DB = merged;
+        if (!DB.archived) DB.archived = [];
+        if (!DB.notes) DB.notes = { combos: [] };
+        _ensureSettingsSchema();
+        DB.settings.backend.supabaseUrl = cleanUrl;
+        DB.settings.backend.supabaseAnonKey = key;
+        DB.settings.backend.syncPassphrase = pass;
+        DB.settings.backend.cloudSyncProvider = 'supabase';
+        _reapplyRestoreProtections();
+        logAction('settings', 'sync-merge', 'Merged changes made on two devices (' + _deviceLabel() + ' + ' + otherLabel + ')');
+        renderAllViews();
+        didMerge = true;
+        action = 'push';
+      } else {
+        action = localTs > cloudTs ? 'push' : 'pull'; // nothing to merge from — newer copy wins, the other is kept below
+      }
+    }
+
+    if (action === 'push') {
+      if (cloud && cloudMoved && !didMerge) {
+        // Overwriting a cloud copy this device never saw: keep it, locally and in cloud history.
+        await _eg_snapshot('Replaced in the cloud — was from ' + otherLabel, cloudCopy);
+        _eg_pushHistory(cleanUrl, key, userId, cloud.data, cloudTs, cloud.device_label || '', true);
+      }
+      const encrypted = await _eg_encrypt(DB, pass);
+      newCloudTs = await _eg_supabasePush(cleanUrl, key, userId, encrypted);
       didPush = true;
-    } else if (direction === 'pull' || (direction === 'auto' && cloud && cloudTs > localTs)) {
-      const decrypted = await _eg_decrypt(cloud.data, cfg.syncPassphrase);
-      // Preserve a few device-only fields from local
-      decrypted._savedAt = cloudTs;
-      DB = decrypted;
+      _eg_pushHistory(cleanUrl, key, userId, encrypted, newCloudTs, _deviceLabel(), didMerge);
+    } else if (action === 'pull') {
+      if (localMoved && localTs) await _eg_snapshot('Replaced on this device — before pulling from ' + otherLabel, DB);
+      cloudCopy._savedAt = cloudTs;
+      DB = cloudCopy;
       // v32: re-apply any local restore decisions the cloud may have overwritten
       _reapplyRestoreProtections();
       // Persist locally without re-triggering sync
@@ -7613,22 +8037,23 @@ async function _eg_syncNowImpl(direction, opts) {
       // Render WITHOUT saveDB so _savedAt stays == cloudTs and no push is scheduled (bug #5).
       renderAllViews();
     }
-    // Write sync metadata onto the CURRENT DB.settings.backend. After a pull, `cfg`
-    // points at the discarded pre-pull object, so re-read it (bug #45).
+
+    // Write sync metadata onto the CURRENT DB.settings.backend. After a pull or merge, `cfg`
+    // points at the discarded object, so re-read it (bug #45).
     const cfg2 = DB.settings.backend;
     cfg2.lastSyncAt = Date.now();
-    cfg2.lastSyncDirection = didPush ? 'push' : (didPull ? 'pull' : 'no-change');
+    cfg2.lastSyncDirection = didMerge ? 'merged' : (didPush ? 'push' : (didPull ? 'pull' : 'no-change'));
     cfg2.lastSyncError = '';
-    // v29 BUGFIX: persist DB without bumping DB._savedAt (which would break the
-    // localTs > cloudTs comparison on the next sync and cause permanent push-only behavior).
+    // v29 BUGFIX: persist DB without bumping DB._savedAt.
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (e) {}
     idbSet(STORAGE_KEY, DB).catch(() => {});
-    // v29: visible decision log so cross-browser sync issues are debuggable from the console.
-    console.log('[sync]', cfg2.lastSyncDirection, '| direction:', direction, '| localTs:', new Date(localTs).toISOString(), '| cloudTs:', cloudTs ? new Date(cloudTs).toISOString() : 'none');
-    // v27: only show the big floating indicator when NOT silent (i.e., for manual syncs / errors)
-    if (!silent) _eg_setSyncStatus('ok', didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced'));
+    _eg_setSyncState(newCloudTs, DB._savedAt || 0);
+    _eg_saveBase(DB, newCloudTs);
+    console.log('[sync]', cfg2.lastSyncDirection, '| direction:', direction, '| localTs:', new Date(localTs).toISOString(), '| cloudTs:', cloudTs ? new Date(cloudTs).toISOString() : 'none', '| moved:', localMoved ? 'local' : '', cloudMoved ? 'cloud' : '');
+    // A merge is worth a moment of attention even on a silent sync.
+    if (!silent || didMerge) _eg_setSyncStatus('ok', didMerge ? '☁ Synced — merged changes from ' + otherLabel : (didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced')));
     _eg_updateHeaderSyncPill('ok');
-    return { ok: true, didPush, didPull, cloudTs, localTs };
+    return { ok: true, didPush, didPull, didMerge, cloudTs, localTs };
   } catch (e) {
     DB.settings.backend.lastSyncError = e.message;
     // v29: same — persist error state without bumping _savedAt
@@ -7762,7 +8187,7 @@ function openCloudSyncWizard() {
     '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">⚙ Step 2: Run the SQL script (one-time setup)</summary>' +
       '<p style="font-size:0.85rem;color:#555;margin:6px 0">In your Supabase dashboard → click <strong>SQL Editor</strong> (left sidebar) → <strong>New query</strong> → paste this script and click <strong>Run</strong>:</p>' +
-      '<textarea id="sync-sql" readonly style="width:100%;height:200px;font-family:monospace;font-size:0.78rem;padding:10px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff" onclick="this.select()">-- Exercise Group Cloud Sync setup\n-- Safe to re-run any time (idempotent)\n\nCREATE TABLE IF NOT EXISTS app_data (\n  user_id TEXT PRIMARY KEY,\n  data TEXT NOT NULL,\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  device_label TEXT\n);\n\n-- Allow anonymous read/write — data is end-to-end encrypted in the app, so this is safe\nALTER TABLE app_data ENABLE ROW LEVEL SECURITY;\n\nDROP POLICY IF EXISTS "Allow anon read"   ON app_data;\nDROP POLICY IF EXISTS "Allow anon write"  ON app_data;\nDROP POLICY IF EXISTS "Allow anon update" ON app_data;\n\nCREATE POLICY "Allow anon read"   ON app_data FOR SELECT TO anon USING (true);\nCREATE POLICY "Allow anon write"  ON app_data FOR INSERT TO anon WITH CHECK (true);\nCREATE POLICY "Allow anon update" ON app_data FOR UPDATE TO anon USING (true) WITH CHECK (true);</textarea>' +
+      '<textarea id="sync-sql" readonly style="width:100%;height:200px;font-family:monospace;font-size:0.78rem;padding:10px;border:1px solid #ccc;border-radius:6px;background:#1a3a5c;color:#fff" onclick="this.select()">-- Exercise Group Cloud Sync setup\n-- Safe to re-run any time (idempotent)\n\nCREATE TABLE IF NOT EXISTS app_data (\n  user_id TEXT PRIMARY KEY,\n  data TEXT NOT NULL,\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  device_label TEXT\n);\n\n-- Allow anonymous read/write — data is end-to-end encrypted in the app, so this is safe\nALTER TABLE app_data ENABLE ROW LEVEL SECURITY;\n\nDROP POLICY IF EXISTS "Allow anon read"   ON app_data;\nDROP POLICY IF EXISTS "Allow anon write"  ON app_data;\nDROP POLICY IF EXISTS "Allow anon update" ON app_data;\n\nCREATE POLICY "Allow anon read"   ON app_data FOR SELECT TO anon USING (true);\nCREATE POLICY "Allow anon write"  ON app_data FOR INSERT TO anon WITH CHECK (true);\nCREATE POLICY "Allow anon update" ON app_data FOR UPDATE TO anon USING (true) WITH CHECK (true);\n\n' + _EG_HISTORY_SQL + '</textarea>' +
       '<button class="btn btn-blue btn-sm" onclick="navigator.clipboard.writeText(document.getElementById(\'sync-sql\').value);alert(\'📋 SQL copied to clipboard\')" style="margin-top:6px">📋 Copy SQL</button>' +
     '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔑 Step 3: Paste your project credentials</summary>' +
@@ -7868,6 +8293,7 @@ async function _eg_saveCloudSync() {
   DB.settings.backend.cloudSyncProvider = 'supabase';
   closeOv('ov-edit');
 
+  _eg_clearSyncState(); // a new connection (or passphrase) means the old base copy is meaningless
   const result = await syncNow(direction);
   if (direction === 'pull') {
     // Pull replaced DB with the cloud copy — re-assert THIS device's sync credentials so
@@ -9292,11 +9718,12 @@ function renderAdvanced() {
       '<button class="btn btn-blue" onclick="openCloudSyncWizard()">' + (syncOn ? '⚙ Reconfigure' : '☁ Set up cloud sync') + '</button>' +
       (syncOn ? '<button class="btn btn-green" onclick="syncNow(\'auto\').then(()=>renderAdvanced())">↻ Sync now</button>' : '') +
       (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PUSH — overwrite cloud with local data?\'))syncNow(\'push\').then(()=>renderAdvanced())">⬆ Force push</button>' : '') +
-      (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PULL — overwrite local data with cloud?\\n\\nLocal changes since last sync will be LOST.\'))syncNow(\'pull\').then(()=>renderAdvanced())">⬇ Force pull</button>' : '') +
+      (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PULL — replace this device\\\'s data with the cloud copy?\\n\\nA copy of this device\\\'s data is kept under ⏮ Earlier versions.\'))syncNow(\'pull\').then(()=>renderAdvanced())">⬇ Force pull</button>' : '') +
+      '<button class="btn btn-gray" onclick="openVersionHistory()" title="Every copy a sync replaced, plus one a day — look inside or go back to any of them">⏮ Earlier versions</button>' +
       (syncOn ? '<button class="btn btn-blue" onclick="getSyncShareCode()" title="Get a code you can paste on another device to sync them too">📋 Share sync code</button>' : '') +
       (syncOn ? '<button class="btn btn-red" onclick="if(confirm(\'Disconnect cloud sync? Your data stays on this device. Re-connect any time.\')){DB.settings.backend.cloudSyncProvider=\'none\';saveDB();renderAdvanced();}">🔌 Disconnect</button>' : '') +
     '</div>' +
-    advRow('Auto-sync after every save', 'syncAutoOnSave', 'toggle', 'When ON, every change pushes to cloud (debounced ~2.5 sec).') +
+    advRow('Auto-sync after every save', 'syncAutoOnSave', 'toggle', 'When ON, every change goes to the cloud right away. If another device changed things meanwhile, the two are merged — nothing is overwritten.') +
     advRow('Auto-pull interval (minutes)', 'syncIntervalMin', 'number', 'Periodically check for changes from other devices. 0 = disabled. Default 5 min.') +
     '<details style="margin-top:8px"><summary style="cursor:pointer;color:#888;font-size:0.85rem">Show raw credentials</summary>' +
       '<div style="padding-top:8px">' +
@@ -10277,7 +10704,8 @@ setTimeout(() => { try { if (_isCloudSyncActive()) _eg_updateHeaderSyncPill('ok'
 // v28: Pull from cloud whenever the tab becomes visible/focused (catches changes from other devices fast)
 let _eg_lastFocusPull = 0;
 function _eg_pullOnFocus() {
-  if (!_isCloudSyncActive()) return;
+  // v33: a tab that hit a sync error or slept for a day is exactly the one that must pull now
+  if (!_eg_syncConfigured()) return;
   // Throttle: only pull at most once every 5 seconds
   const now = Date.now();
   if (now - _eg_lastFocusPull < 5000) return;
