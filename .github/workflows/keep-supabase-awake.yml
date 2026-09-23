@@ -1,0 +1,66 @@
+# Keep the exercise app's Supabase project from being paused.
+#
+# Free Supabase projects are paused automatically after about a week without
+# activity, and a paused project is simply gone from the internet: every sync
+# fails, and the app quietly stops backing anything up. That is what happened
+# to exercise-group — it was paused in July and nobody noticed for weeks.
+#
+# This runs one tiny query a day, which counts as activity, so the project
+# never goes idle long enough to be paused.
+#
+# One-time setup — GitHub → Settings → Secrets and variables → Actions:
+#   SUPABASE_URL       https://<project-ref>.supabase.co
+#   SUPABASE_ANON_KEY  the "anon public" key from Project Settings → API
+# Both are also in the app under Menu → Advanced → Cloud sync → raw
+# credentials. The anon key is the public one — it is safe as a secret here,
+# and the data behind it is encrypted on the device before it is ever sent.
+#
+# If this workflow ever turns red, the project is unreachable: open
+# supabase.com/dashboard and press Restore.
+
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: '17 9 * * *'   # once a day, 09:17 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query the project so it counts as activity
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::warning::SUPABASE_URL / SUPABASE_ANON_KEY are not set, so nothing is"
+            echo "::warning::keeping the project awake. Add them under Settings ->"
+            echo "::warning::Secrets and variables -> Actions. Until then the project"
+            echo "::warning::can be paused again after a week of not being used."
+            exit 0
+          fi
+          code=$(curl -sS --max-time 60 -o body.txt -w '%{http_code}' \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "${URL%/}/rest/v1/app_data?select=user_id&limit=1") || code=000
+          echo "HTTP $code"
+          if [ "$code" = "200" ]; then
+            echo "Project is awake."
+            exit 0
+          fi
+          head -c 300 body.txt || true; echo
+          if [ "$code" = "000" ]; then
+            echo "::error::The project could not be reached at all. A paused Supabase"
+            echo "::error::project looks exactly like this. Open supabase.com/dashboard,"
+            echo "::error::open the project and press Restore (possible for 90 days"
+            echo "::error::after it pauses)."
+          elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "::error::The project rejected the key. Copy the anon public key again"
+            echo "::error::from Project Settings -> API and update the SUPABASE_ANON_KEY secret."
+          elif [ "$code" = "404" ]; then
+            echo "::error::The app_data table is missing. Run the setup SQL from the app:"
+            echo "::error::Menu -> Earlier versions -> Copy SQL."
+          fi
+          exit 1

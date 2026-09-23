@@ -575,6 +575,7 @@ body.density-compact .fx-hero { padding: 14px 16px; }
 </header>
 <div class="edit-banner">✏️ <strong>Edit Mode ON</strong> — You can record payments, edit members, and manage data.</div>
 <div id="backup-reminder" style="display:none;background:#fff3cd;border-bottom:2px solid #ffc107;padding:10px 20px;font-size:0.88rem;color:#856404;text-align:center"></div>
+<div id="sync-health" style="display:none;background:#fdecea;border-bottom:2px solid #c0392b;padding:11px 20px;font-size:0.88rem;color:#721c24;text-align:center;line-height:1.5"></div>
 <div id="selftest-banner" style="display:none;background:#fff3cd;border-bottom:2px solid #f0b400;padding:10px 20px;font-size:0.88rem;color:#856404;text-align:center"></div>
 
 <nav id="mainnav">
@@ -6935,6 +6936,12 @@ function _checkBackupReminder() {
   const cloudActive = cfg && cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.syncPassphrase;
   const cloudRecent = cloudActive && cfg.lastSyncAt && (Date.now() - cfg.lastSyncAt) < 7 * 24 * 60 * 60 * 1000;
   if (cloudRecent) { banner.style.display = 'none'; return; }
+  // v33: when the cloud backup is dead, the red banner above already says so —
+  // and says it better. Two banners stacked is how people learn to ignore both.
+  if (cloudActive && typeof _eg_syncHealth === 'function') {
+    const h = _eg_syncHealth();
+    if (h.state === 'stale' || h.state === 'never') { banner.style.display = 'none'; return; }
+  }
   // v26: permanent dismiss support
   if (DB.settings.backupReminderDisabled) { banner.style.display = 'none'; return; }
   const last = DB.settings.lastBackupAt || 0;
@@ -8051,6 +8058,7 @@ async function _eg_syncNowImpl(direction, opts) {
     _eg_saveBase(DB, newCloudTs);
     console.log('[sync]', cfg2.lastSyncDirection, '| direction:', direction, '| localTs:', new Date(localTs).toISOString(), '| cloudTs:', cloudTs ? new Date(cloudTs).toISOString() : 'none', '| moved:', localMoved ? 'local' : '', cloudMoved ? 'cloud' : '');
     // A merge is worth a moment of attention even on a silent sync.
+    _eg_renderSyncHealthBanner();
     if (!silent || didMerge) _eg_setSyncStatus('ok', didMerge ? '☁ Synced — merged changes from ' + otherLabel : (didPush ? '☁ Synced (pushed)' : (didPull ? '☁ Synced (pulled new data)' : '☁ Synced')));
     _eg_updateHeaderSyncPill('ok');
     return { ok: true, didPush, didPull, didMerge, cloudTs, localTs };
@@ -8060,20 +8068,115 @@ async function _eg_syncNowImpl(direction, opts) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); } catch (_) {}
     idbSet(STORAGE_KEY, DB).catch(() => {});
     // Errors ALWAYS show — silent or not. Data integrity matters.
-    _eg_setSyncStatus('err', '⚠ Sync failed: ' + e.message);
+    _eg_setSyncStatus('err', '⚠ ' + ((typeof _eg_explainSyncError === 'function') ? _eg_explainSyncError(e.message).short : e.message));
     _eg_updateHeaderSyncPill('err');
+    _eg_renderSyncHealthBanner();
     return { ok: false, error: e.message };
   }
   // Note: _eg_syncInFlight / _eg_syncPromise are reset by the syncNow() wrapper's .finally.
 }
 
+/* ============ v33: IS THE BACKUP ACTUALLY WORKING? ============
+   A backup that quietly stopped is worse than no backup, because she thinks
+   she is covered. This is exactly how a day went missing: the cloud project
+   was paused for weeks, every sync failed, and the app said nothing — the
+   header pill even HID itself, because it was only shown when sync was
+   healthy. Now a broken backup is stated plainly, with what to do about it. */
+const SYNC_STALE_MS = 24 * 60 * 60 * 1000;
+function _eg_syncHealth() {
+  _ensureSettingsSchema();
+  const cfg = DB.settings.backend;
+  if (!_eg_syncConfigured()) return { state: 'off' };
+  const okAt = cfg.lastSyncAt || 0;          // only a SUCCESSFUL sync writes this
+  const since = okAt ? Date.now() - okAt : Infinity;
+  if (!okAt) return { state: 'never', error: cfg.lastSyncError };
+  if (since >= SYNC_STALE_MS) return { state: 'stale', okAt: okAt, since: since, error: cfg.lastSyncError };
+  if (cfg.lastSyncError) return { state: 'wobbly', okAt: okAt, error: cfg.lastSyncError };
+  return { state: 'ok', okAt: okAt };
+}
+// Turn a raw error into something worth reading at 11pm.
+function _eg_explainSyncError(msg) {
+  const m = msg || '';
+  if (typeof navigator !== 'undefined' && navigator.onLine === false)
+    return { short: 'This device has no internet right now.',
+             fix: 'Nothing is lost — your changes are saved on this device and will go up to the cloud by themselves once you are back online.' };
+  if (/Failed to fetch|NetworkError|Load failed|ERR_NAME|getaddrinfo|ENOTFOUND|CONNECT/i.test(m))
+    return { short: 'The cloud project cannot be reached at all.',
+             fix: 'Free Supabase projects are paused automatically after about a week of not being used, and a paused project vanishes from the internet exactly like this. Open supabase.com/dashboard, click the project, and press Restore — then open this app again. A paused project can only be restored within 90 days of pausing; after that the data can still be downloaded, but not switched back on.' };
+  if (/\b(401|403)\b|JWT|apikey|Invalid API key/i.test(m))
+    return { short: 'The cloud rejected the key this device is using.',
+             fix: 'In Supabase the project keys may have been rotated. Copy the "anon public" key again from Project Settings → API and paste it in Menu → Advanced → Cloud sync.' };
+  if (/\b404\b|does not exist|relation|schema cache/i.test(m))
+    return { short: 'The cloud project is there, but the table the app saves into is missing.',
+             fix: 'Open Menu → ⏮ Earlier versions, copy the SQL shown there, and run it once in Supabase → SQL Editor.' };
+  if (/passphrase|decrypt|OperationError/i.test(m))
+    return { short: 'The cloud copy could not be unlocked with this passphrase.',
+             fix: 'The passphrase must match the other device exactly. Nothing was changed — check it in Menu → Advanced → Cloud sync.' };
+  return { short: 'The cloud said no.', fix: 'The exact words were: ' + _esc(m) };
+}
+function _eg_humanGap(ms) {
+  const d = Math.floor(ms / 86400000);
+  if (d >= 1) return d === 1 ? 'a day' : d + ' days';
+  const h = Math.floor(ms / 3600000);
+  return h >= 1 ? (h === 1 ? 'an hour' : h + ' hours') : 'a few minutes';
+}
+// The banner. Only for a backup that is actually broken — a wobble is left to
+// the header pill, so this never becomes wallpaper she learns to ignore.
+function _eg_renderSyncHealthBanner() {
+  const el = document.getElementById('sync-health');
+  if (!el) return;
+  const h = _eg_syncHealth();
+  // The backup nag renders on its own schedule; re-run it so the two banners
+  // never sit stacked on top of each other.
+  try { if (typeof _checkBackupReminder === 'function') _checkBackupReminder(); } catch (e) {}
+  if (h.state !== 'stale' && h.state !== 'never') { el.style.display = 'none'; return; }
+  const why = _eg_explainSyncError(h.error);
+  el.style.display = 'block';
+  el.innerHTML =
+    '<strong>☁ Your cloud backup is not working.</strong> ' +
+    (h.state === 'never'
+      ? 'It has not saved to the cloud even once since it was set up.'
+      : 'Nothing has reached the cloud for ' + _eg_humanGap(h.since) + ' — the last time was ' + new Date(h.okAt).toLocaleString() + '.') +
+    ' Your data is safe on this device, but right now this device is the only copy. ' +
+    '<span style="display:block;margin-top:4px">' + why.short + '</span>' +
+    '<span style="display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+      '<button class="btn btn-green btn-sm" onclick="exportBackup()">💾 Save a backup file now</button>' +
+      '<button class="btn btn-blue btn-sm" onclick="showSyncHelp()">What do I do?</button>' +
+      '<button class="btn btn-gray btn-sm" onclick="syncNow(\'auto\').then(_eg_renderSyncHealthBanner)">↻ Try again</button>' +
+    '</span>';
+}
+function showSyncHelp() {
+  const h = _eg_syncHealth();
+  const why = _eg_explainSyncError(h.error);
+  document.getElementById('ov-edit-body').innerHTML =
+    '<div class="mh"><h2>☁ Why the backup stopped</h2><button class="mclose" onclick="closeOv(\'ov-edit\')">✕</button></div>' +
+    '<p style="font-size:0.92rem;line-height:1.6"><strong>' + why.short + '</strong></p>' +
+    '<p style="font-size:0.9rem;line-height:1.65;color:#444">' + why.fix + '</p>' +
+    '<div style="background:#e8f5e9;border-left:4px solid #27ae60;padding:10px 12px;border-radius:6px;font-size:0.88rem;color:#155724;margin-top:12px">' +
+      'None of your data is lost. Everything you have entered is on this device, and the app keeps working normally whether or not the cloud is reachable. ' +
+      'The cloud is the second copy — so until it is back, press <strong>Save a backup file</strong> and keep that file somewhere safe.' +
+    '</div>' +
+    (h.error ? '<details style="margin-top:10px"><summary style="cursor:pointer;color:#888;font-size:0.82rem">Technical details</summary>' +
+      '<div style="font-family:monospace;font-size:0.78rem;color:#666;padding-top:6px;word-break:break-word">' + _esc(h.error) + '</div></details>' : '') +
+    '<div class="factions">' +
+      '<button class="btn btn-green" onclick="exportBackup()">💾 Save a backup file</button>' +
+      '<button class="btn btn-blue" onclick="syncNow(\'auto\').then(()=>{_eg_renderSyncHealthBanner();closeOv(\'ov-edit\');})">↻ Try the cloud again</button>' +
+      '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Close</button>' +
+    '</div>';
+  openOv('ov-edit');
+}
 // v27: small persistent ☁ pill in the header — subtle status indicator
 function _eg_updateHeaderSyncPill(state) {
   let pill = document.getElementById('sync-pill');
-  if (!_isCloudSyncActive() && state !== 'syncing') {
-    // No cloud sync configured → hide the pill entirely
+  // v33: hide the pill only when there is no cloud sync to report on. A broken
+  // backup used to hide it, which is the one moment it has something to say.
+  if (!_eg_syncConfigured() && state !== 'syncing') {
     if (pill) pill.style.display = 'none';
     return;
+  }
+  if (!state) {
+    const h = _eg_syncHealth();
+    state = (h.state === 'stale' || h.state === 'never') ? 'err' : (h.state === 'wobbly' ? 'err' : 'ok');
   }
   if (!pill) {
     // Create it once next to save-status
@@ -8088,8 +8191,15 @@ function _eg_updateHeaderSyncPill(state) {
   }
   pill.style.display = '';
   if (state === 'syncing') { pill.textContent = '☁ Syncing…'; pill.style.background = 'rgba(52,152,219,0.4)'; }
-  else if (state === 'err')  { pill.textContent = '☁ Sync error'; pill.style.background = 'rgba(231,76,60,0.5)'; pill.title = 'Click to retry sync'; }
-  else { pill.textContent = '☁ Synced'; pill.style.background = 'rgba(39,174,96,0.4)'; pill.title = 'Click to sync now'; }
+  else if (state === 'err') {
+    const h = _eg_syncHealth();
+    const broken = h.state === 'stale' || h.state === 'never';
+    pill.textContent = broken ? '⚠ Backup off' : '☁ Sync error';
+    pill.style.background = 'rgba(231,76,60,' + (broken ? '0.85' : '0.5') + ')';
+    pill.title = broken ? 'Nothing has reached the cloud — tap to see why' : 'Click to retry sync';
+    pill.onclick = broken ? showSyncHelp : function() { syncNow('auto'); };
+  }
+  else { pill.textContent = '☁ Synced'; pill.style.background = 'rgba(39,174,96,0.4)'; pill.title = 'Click to sync now'; pill.onclick = function() { syncNow('auto'); }; }
 }
 function _eg_setSyncStatus(level, text) {
   let ind = document.getElementById('sync-status');
@@ -10788,6 +10898,9 @@ setTimeout(async function() {
 // v21: check backup reminder banner on load + every hour
 setTimeout(_checkBackupReminder, 800);
 setInterval(_checkBackupReminder, 60 * 60 * 1000);
+// v33: the backup-is-dead banner, on load and every hour after
+setTimeout(() => { try { _eg_renderSyncHealthBanner(); _eg_updateHeaderSyncPill(); } catch (e) {} }, 900);
+setInterval(() => { try { _eg_renderSyncHealthBanner(); } catch (e) {} }, 60 * 60 * 1000);
 
 // v23: data integrity self-test on load
 setTimeout(showSelfTestBanner, 1000);
