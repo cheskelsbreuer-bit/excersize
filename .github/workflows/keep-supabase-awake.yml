@@ -8,12 +8,12 @@
 # This runs one tiny query a day, which counts as activity, so the project
 # never goes idle long enough to be paused.
 #
-# One-time setup — GitHub → Settings → Secrets and variables → Actions:
-#   SUPABASE_URL       https://<project-ref>.supabase.co
-#   SUPABASE_ANON_KEY  the "anon public" key from Project Settings → API
-# Both are also in the app under Menu → Advanced → Cloud sync → raw
-# credentials. The anon key is the public one — it is safe as a secret here,
-# and the data behind it is encrypted on the device before it is ever sent.
+# One-time setup: add ONE repository secret, SUPABASE_ANON_KEY — the
+# "anon public" key from the project's API Keys page. The project address
+# below is not a secret (it unlocks nothing on its own), so it lives here;
+# the key stays out of this public repository.
+#   Key:    https://supabase.com/dashboard/project/slmdajpohfxdubhkuusk/settings/api-keys
+#   Secret: https://github.com/cheskelsbreuer-bit/excersize/settings/secrets/actions/new
 #
 # If this workflow ever turns red, the project is unreachable: open
 # supabase.com/dashboard and press Restore.
@@ -32,14 +32,14 @@ jobs:
     steps:
       - name: Query the project so it counts as activity
         env:
-          URL: ${{ secrets.SUPABASE_URL }}
+          URL: https://slmdajpohfxdubhkuusk.supabase.co
           KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$URL" ] || [ -z "$KEY" ]; then
-            echo "::warning::SUPABASE_URL / SUPABASE_ANON_KEY are not set, so nothing is"
-            echo "::warning::keeping the project awake. Add them under Settings ->"
-            echo "::warning::Secrets and variables -> Actions. Until then the project"
-            echo "::warning::can be paused again after a week of not being used."
+          if [ -z "$KEY" ]; then
+            echo "::warning::SUPABASE_ANON_KEY is not set, so nothing is keeping the"
+            echo "::warning::project awake. Copy the anon key from"
+            echo "::warning::supabase.com/dashboard/project/slmdajpohfxdubhkuusk/settings/api-keys"
+            echo "::warning::and add it as a repository secret named SUPABASE_ANON_KEY."
             exit 0
           fi
           code=$(curl -sS --max-time 60 -o body.txt -w '%{http_code}' \
