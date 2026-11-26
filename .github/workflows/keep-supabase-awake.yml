@@ -42,7 +42,7 @@ jobs:
       # and a week later Supabase would pause the project again. So when the
       # last commit is more than 30 days old, this records one tiny commit.
       # Checked every day, so a missed run is caught the next day.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Keep this repository active
         continue-on-error: true
         run: |
