@@ -24,12 +24,41 @@ on:
   schedule:
     - cron: '17 9 * * *'   # once a day, 09:17 UTC
   workflow_dispatch:
+    inputs:
+      force_keepalive:
+        description: 'Make the keep-active commit now even if one is not due'
+        default: 'false'
+
+permissions:
+  contents: write   # only for the monthly keep-active commit below
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # GitHub switches off scheduled workflows in a public repository after
+      # 60 days without a commit — which would quietly stop the ping above,
+      # and a week later Supabase would pause the project again. So when the
+      # last commit is more than 30 days old, this records one tiny commit.
+      # Checked every day, so a missed run is caught the next day.
+      - uses: actions/checkout@v4
+      - name: Keep this repository active
+        continue-on-error: true
+        run: |
+          last=$(git log -1 --format=%ct)
+          age_days=$(( ($(date +%s) - last) / 86400 ))
+          echo "Last commit was $age_days days ago."
+          if [ "$age_days" -lt 30 ] && [ "${{ github.event_name }}" != "workflow_dispatch" -o "${{ inputs.force_keepalive }}" != "true" ]; then
+            echo "Recent enough, nothing to do."
+            exit 0
+          fi
+          date -u +%F > .github/keepalive.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/keepalive.txt
+          git commit -m "Keep scheduled jobs active (GitHub disables them after 60 idle days)"
+          git push
       - name: Query the project so it counts as activity
         env:
           URL: https://slmdajpohfxdubhkuusk.supabase.co
