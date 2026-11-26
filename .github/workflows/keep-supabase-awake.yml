@@ -74,7 +74,11 @@ jobs:
           # New publishable keys (sb_...) are not JWTs and go on apikey only;
           # older anon keys (eyJ...) also go on Authorization.
           auth=()
-          case "$KEY" in sb_*) ;; *) auth=(-H "Authorization: Bearer $KEY") ;; esac
+          case "$KEY" in
+            sb_publishable_*) echo "Using the new publishable key." ;;
+            sb_*) echo "::error::This is not a publishable key. Use the sb_publishable_ key, never the secret one."; exit 1 ;;
+            *) echo "Using the older anon key."; auth=(-H "Authorization: Bearer $KEY") ;;
+          esac
           code=$(curl -sS --max-time 60 -o body.txt -w '%{http_code}' \
             -H "apikey: $KEY" "${auth[@]}" \
             "${URL%/}/rest/v1/app_data?select=user_id&limit=1") || code=000
