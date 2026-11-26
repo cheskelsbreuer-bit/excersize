@@ -559,6 +559,7 @@ body.density-compact .fx-hero { padding: 14px 16px; }
         <button class="menu-item" onclick="openMonthlySummary();toggleMenu()">📅 This Month at a Glance</button>
         <button class="menu-item" onclick="openUndoHistory();toggleMenu()">⏪ Change History</button>
         <button class="menu-item" onclick="openVersionHistory();toggleMenu()">⏮ Earlier Versions (get data back)</button>
+        <button class="menu-item" onclick="toggleMenu();updateCloudKey()">🔑 Update cloud key</button>
         <hr style="border:none;border-top:1px solid #eee;margin:4px 0">
         <button class="menu-item" onclick="resetToOriginal();toggleMenu()" style="color:#c0392b">↻ Reset to Original</button>
       </div>
@@ -7541,6 +7542,11 @@ async function _eg_userIdFromPassphrase(passphrase) {
 }
 
 // Supabase REST helpers (no SDK, just fetch)
+// Legacy anon keys (eyJ…) go on both headers; new publishable keys (sb_…) are
+// not JWTs and belong on `apikey` alone — a Bearer copy of one is rejected.
+function _eg_keyHeaders(key) {
+  return /^sb_/.test(key || '') ? { 'apikey': key } : { 'apikey': key, 'Authorization': 'Bearer ' + key };
+}
 async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
   // v29 BUGFIX: stamp cloud's updated_at with DB._savedAt (the actual last user-change time),
   // NOT Date.now(). Otherwise localTs vs cloudTs comparison drifts apart on every sync and
@@ -7552,7 +7558,7 @@ async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
     // v33: keepalive lets a push finish even if the tab is closed right after a save
     keepalive: body.length < KEEPALIVE_MAX_BODY,
     headers: {
-      'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey,
+      ..._eg_keyHeaders(anonKey),
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates,return=minimal'
     },
@@ -7566,7 +7572,7 @@ async function _eg_supabasePush(url, anonKey, userId, encryptedData) {
 }
 async function _eg_supabasePull(url, anonKey, userId) {
   const resp = await fetch(url + '/rest/v1/app_data?user_id=eq.' + encodeURIComponent(userId) + '&select=data,updated_at,device_label', {
-    headers: { 'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey }
+    headers: _eg_keyHeaders(anonKey)
   });
   if (!resp.ok) throw new Error('Pull failed (' + resp.status + ')');
   const arr = await resp.json();
@@ -7621,7 +7627,7 @@ function _eg_syncConfigured() {
   return !!(cfg && cfg.cloudSyncProvider === 'supabase' && cfg.supabaseUrl && cfg.supabaseAnonKey && cfg.syncPassphrase);
 }
 function _eg_sbHeaders(anonKey, extra) {
-  return Object.assign({ 'apikey': anonKey, 'Authorization': 'Bearer ' + anonKey }, extra || {});
+  return Object.assign(_eg_keyHeaders(anonKey), extra || {});
 }
 
 // Device-local record of the last successful sync. Lives OUTSIDE the synced DB on
@@ -7944,6 +7950,35 @@ async function openVersionHistory() {
   body.innerHTML = h;
 }
 
+async function updateCloudKey() {
+  _ensureSettingsSchema();
+  const cfg = DB.settings.backend;
+  if (!_eg_syncConfigured()) { alert('Cloud sync is not set up on this device yet.'); return; }
+  const key = (prompt('Paste the new key from Supabase.\n\nIt starts with  sb_publishable_  (or  eyJ  for the older kind).') || '').trim();
+  if (!key) return;
+  if (!/^(sb_publishable_|eyJ)/.test(key)) {
+    alert('That does not look like the right key.\n\nIt should start with  sb_publishable_ . Make sure you copied the PUBLISHABLE key, never the secret one.');
+    return;
+  }
+  const url = _eg_normalizeSupabaseUrl(cfg.supabaseUrl);
+  try {
+    const r = await fetch(url + '/rest/v1/app_data?select=user_id&limit=1', { headers: _eg_keyHeaders(key) });
+    if (!r.ok) {
+      alert('❌ The cloud did not accept that key (HTTP ' + r.status + '). Nothing was changed — the old key is still in use.');
+      return;
+    }
+  } catch (e) {
+    alert('❌ Could not reach the cloud to check the key (' + e.message + '). Nothing was changed.');
+    return;
+  }
+  cfg.supabaseAnonKey = key;
+  saveDB();
+  const res = await syncNow('auto');
+  logAction('settings', 'cloud-key', 'Cloud key updated');
+  alert(res && res.ok ? '✅ New key saved and working. The cloud backup is synced.' : '⚠ The key was saved, but the sync after it had a problem: ' + ((res && res.error) || 'unknown'));
+  if (document.getElementById('tab-advanced') && document.getElementById('tab-advanced').classList.contains('active')) renderAdvanced();
+}
+
 // The main sync orchestrator — push, pull, merge, or auto (what changed wins)
 let _eg_syncInFlight = false;
 let _eg_syncPromise = null;
@@ -8105,7 +8140,7 @@ function _eg_explainSyncError(msg) {
              fix: 'Free Supabase projects are paused automatically after about a week of not being used, and a paused project vanishes from the internet exactly like this. Open supabase.com/dashboard, click the project, and press Restore — then open this app again. A paused project can only be restored within 90 days of pausing; after that the data can still be downloaded, but not switched back on.' };
   if (/\b(401|403)\b|JWT|apikey|Invalid API key/i.test(m))
     return { short: 'The cloud rejected the key this device is using.',
-             fix: 'In Supabase the project keys may have been rotated. Copy the "anon public" key again from Project Settings → API and paste it in Menu → Advanced → Cloud sync.' };
+             fix: 'Supabase may have switched off the older kind of key. In Supabase open Project Settings → API Keys, copy the PUBLISHABLE key (it starts with sb_publishable_), then in this app open the Menu and press 🔑 Update cloud key.' };
   if (/\b404\b|does not exist|relation|schema cache/i.test(m))
     return { short: 'The cloud project is there, but the table the app saves into is missing.',
              fix: 'Open Menu → ⏮ Earlier versions, copy the SQL shown there, and run it once in Supabase → SQL Editor.' };
@@ -8160,6 +8195,7 @@ function showSyncHelp() {
       '<div style="font-family:monospace;font-size:0.78rem;color:#666;padding-top:6px;word-break:break-word">' + _esc(h.error) + '</div></details>' : '') +
     '<div class="factions">' +
       '<button class="btn btn-green" onclick="exportBackup()">💾 Save a backup file</button>' +
+      (/rejected the key/.test(why.short) ? '<button class="btn btn-orange" onclick="closeOv(\'ov-edit\');updateCloudKey()">🔑 Update cloud key</button>' : '') +
       '<button class="btn btn-blue" onclick="syncNow(\'auto\').then(()=>{_eg_renderSyncHealthBanner();closeOv(\'ov-edit\');})">↻ Try the cloud again</button>' +
       '<button class="btn btn-gray" onclick="closeOv(\'ov-edit\')">Close</button>' +
     '</div>';
@@ -8303,7 +8339,7 @@ function openCloudSyncWizard() {
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔑 Step 3: Paste your project credentials</summary>' +
       '<p style="font-size:0.85rem;color:#555;margin:6px 0">In your Supabase dashboard → <strong>Project Settings</strong> (gear icon, bottom of left sidebar) → <strong>API</strong> → copy these two values:</p>' +
       '<div class="fg" style="margin-bottom:8px"><label>Project URL</label><input type="text" id="sync-url" value="' + _escAttr(cfg.supabaseUrl || '') + '" placeholder="https://xxxxxxxxxxxx.supabase.co" style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
-      '<div class="fg" style="margin-bottom:8px"><label>anon public key (long JWT)</label><input type="password" id="sync-key" autocomplete="new-password" value="' + _escAttr(cfg.supabaseAnonKey || '') + '" placeholder="eyJhbGciOi..." style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
+      '<div class="fg" style="margin-bottom:8px"><label>Publishable key (sb_publishable_…) or older anon key (eyJ…)</label><input type="password" id="sync-key" autocomplete="new-password" value="' + _escAttr(cfg.supabaseAnonKey || '') + '" placeholder="sb_publishable_..." style="padding:8px 10px;border:1px solid #ccc;border-radius:7px;font-size:0.88rem;font-family:monospace"></div>' +
     '</details>' +
     '<details open><summary style="cursor:pointer;font-weight:700;color:#1a3a5c;padding:8px 0">🔐 Step 4: Choose a sync passphrase</summary>' +
       '<p style="font-size:0.85rem;color:#555;margin:6px 0">This is the password that <strong>encrypts your data</strong>. You\'ll need to enter the SAME passphrase on every device. <strong>If you lose it, your data is unrecoverable</strong> — the encryption is real.</p>' +
@@ -8331,14 +8367,14 @@ async function _eg_testCloudSync() {
     const userId = await _eg_userIdFromPassphrase(pass);
     // Try a select on the table
     const r = await fetch(url + '/rest/v1/app_data?user_id=eq.' + encodeURIComponent(userId) + '&select=user_id', {
-      headers: { 'apikey': key, 'Authorization': 'Bearer ' + key }
+      headers: _eg_keyHeaders(key)
     });
     if (!r.ok) {
       const txt = await r.text();
       let hint = '';
       if (r.status === 404 && txt.indexOf('Invalid path') >= 0) hint = '\n\n💡 Looks like a URL issue. The cleaned URL we used was:\n' + url + '\n\nDouble-check it matches your Supabase project URL.';
       else if (r.status === 404 || txt.indexOf('relation') >= 0 || txt.indexOf('does not exist') >= 0) hint = '\n\n💡 The "app_data" table doesn\'t exist yet — you need to run the SQL script (Step 2) in your Supabase SQL Editor first.';
-      else if (r.status === 401 || r.status === 403) hint = '\n\n💡 The anon key looks wrong. Make sure you copied the "anon public" key, NOT the "service_role" key. The anon key is long and starts with "eyJ".';
+      else if (r.status === 401 || r.status === 403) hint = '\n\n💡 The key looks wrong. Copy the PUBLISHABLE key (starts with "sb_publishable_") or the older "anon public" key (starts with "eyJ") — never the secret / service_role key.';
       alert('❌ Connection failed (HTTP ' + r.status + '):\n\n' + txt.slice(0, 300) + hint);
       return;
     }
@@ -9830,6 +9866,7 @@ function renderAdvanced() {
       (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PUSH — overwrite cloud with local data?\'))syncNow(\'push\').then(()=>renderAdvanced())">⬆ Force push</button>' : '') +
       (syncOn ? '<button class="btn btn-orange" onclick="if(confirm(\'Force PULL — replace this device\\\'s data with the cloud copy?\\n\\nA copy of this device\\\'s data is kept under ⏮ Earlier versions.\'))syncNow(\'pull\').then(()=>renderAdvanced())">⬇ Force pull</button>' : '') +
       '<button class="btn btn-gray" onclick="openVersionHistory()" title="Every copy a sync replaced, plus one a day — look inside or go back to any of them">⏮ Earlier versions</button>' +
+      (syncOn ? '<button class="btn btn-blue" onclick="updateCloudKey()" title="Paste a new key from Supabase; it is checked before it is used">🔑 Update cloud key</button>' : '') +
       (syncOn ? '<button class="btn btn-blue" onclick="getSyncShareCode()" title="Get a code you can paste on another device to sync them too">📋 Share sync code</button>' : '') +
       (syncOn ? '<button class="btn btn-red" onclick="if(confirm(\'Disconnect cloud sync? Your data stays on this device. Re-connect any time.\')){DB.settings.backend.cloudSyncProvider=\'none\';saveDB();renderAdvanced();}">🔌 Disconnect</button>' : '') +
     '</div>' +

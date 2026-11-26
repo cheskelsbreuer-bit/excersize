@@ -71,8 +71,12 @@ jobs:
             echo "::warning::and add it as a repository secret named SUPABASE_ANON_KEY."
             exit 0
           fi
+          # New publishable keys (sb_...) are not JWTs and go on apikey only;
+          # older anon keys (eyJ...) also go on Authorization.
+          auth=()
+          case "$KEY" in sb_*) ;; *) auth=(-H "Authorization: Bearer $KEY") ;; esac
           code=$(curl -sS --max-time 60 -o body.txt -w '%{http_code}' \
-            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H "apikey: $KEY" "${auth[@]}" \
             "${URL%/}/rest/v1/app_data?select=user_id&limit=1") || code=000
           echo "HTTP $code"
           if [ "$code" = "200" ]; then
@@ -86,8 +90,8 @@ jobs:
             echo "::error::open the project and press Restore (possible for 90 days"
             echo "::error::after it pauses)."
           elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
-            echo "::error::The project rejected the key. Copy the anon public key again"
-            echo "::error::from Project Settings -> API and update the SUPABASE_ANON_KEY secret."
+            echo "::error::The project rejected the key. Copy the PUBLISHABLE key (sb_publishable_...)"
+            echo "::error::from Project Settings -> API Keys and update the SUPABASE_ANON_KEY secret."
           elif [ "$code" = "404" ]; then
             echo "::error::The app_data table is missing. Run the setup SQL from the app:"
             echo "::error::Menu -> Earlier versions -> Copy SQL."
